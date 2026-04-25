@@ -78,13 +78,10 @@ impl Cpu {
         }
     }
 
-    fn thumb_expand_imm(&self, imm12: u16) -> u32 {
-        if (imm12 >> 10) == 0 {
-            const EXP: [u32; 4] = [1, 0x10001, 0x1000100, 0x1010101];
-            EXP[imm12 as usize >> 8] * (imm12 as u32 & 0xff)
-        } else {
-            let unrotated = 0x80 | (imm12 as u32 & 0x7f);
-            unrotated.rotate_right(imm12 as u32 >> 7)
-        }
+    pub fn set_nz(&mut self, val: u32) {
+        let z = ((val == 0) as u32) << 30;
+        let nz = (val & 0x8000_0000) | z;
+        const NZ_MASK: u32 = 0xc000_0000;
+        self.regs.psr = (self.regs.psr & !NZ_MASK) | nz;
     }
 }

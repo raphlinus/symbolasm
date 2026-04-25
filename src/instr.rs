@@ -5,14 +5,37 @@ impl Cpu {
         let inst_16 = self.load_u16(self.regs.r[15]);
         self.regs.r[15] += 2;
         match inst_16 >> 12 {
+            0x4 => self.inst_4(inst_16),
             0x5 => self.inst_5(inst_16),
             0x7 => self.inst_7(inst_16),
             0x8 => self.inst_8(inst_16),
             0xa => self.inst_a(inst_16),
+            0xb => self.inst_b(inst_16),
             0xc => self.inst_c(inst_16),
             0xe => self.inst_e(inst_16),
             0xf => self.inst_f(inst_16),
             _ => todo!("inst {inst_16:04x} not implemented"),
+        }
+    }
+
+    fn inst_4(&mut self, inst: u16) {
+        if inst & 0x400 == 0 {
+            let op = (inst >> 6) & 0xf;
+            let rdn = (inst & 7) as usize;
+            let rm = ((inst >> 3) & 7) as usize;
+            let rrn = self.regs.r[rdn];
+            let rrm = self.regs.r[rm];
+            let val = match op {
+                0 => rrn & rrm, // EORS
+                1 => rrn ^ rrm, // EORS
+                12 => rrn | rrm, // ORRS
+                _ => todo!(),
+            };
+            self.regs.r[rdn] = val;
+            self.set_nz(val);
+        } else {
+            // special data processing + branch/exchange
+            todo!();
         }
     }
 
@@ -65,6 +88,27 @@ impl Cpu {
             let rd = (inst & 0x700) >> 8;
             self.regs.r[rd as usize] = self.regs.r[13].wrapping_add(imm as u32);
         }
+    }
+
+    // Miscellaneous instructions, see 3.2.1
+    fn inst_b(&mut self, inst: u16) {
+            match (inst >> 8) & 0xf {
+                2 => {
+                    // sign/zero extend, see table 3-16
+                    let opc = (inst >> 6) & 3;
+                    let rm = ((inst >> 3) & 7) as usize;
+                    let rrm = self.regs.r[rm];
+                    let rd = (inst & 7) as usize;
+                    match opc {
+                        0 => self.regs.r[rd] = rrm as i16 as u32, // SXTH
+                        1 => self.regs.r[rd] = rrm as i8 as u32, // SXTB
+                        2 => self.regs.r[rd] = rrm as u16 as u32, // UXTH
+                        3 => self.regs.r[rd] = rrm as u8 as u32, // UXTB
+                        _ => unreachable!(),
+                    }
+                }
+                _ => todo!(),
+            }
     }
 
     fn inst_c(&mut self, inst: u16) {
@@ -239,8 +283,24 @@ impl Cpu {
                     rrn - imm
                 };
             }
+        } else if inst & 0xa00 == 0 {
+            // data processing, modified 12-bit immediate (see 3.3.1)
+            let op = (inst >> 5) & 0xf;
+            let rn = (inst & 0xf) as usize;
+            let rrn = self.regs.r[rn];
+            let rd = ((inst_2 >> 8) & 0xf) as usize;
+            let imm = ((inst & 0x400) << 1) | ((inst_2 & 0x7000) >> 4) | (inst_2 & 0xff);
+            let imm32 = thumb_expand_imm(imm);
+            if rd == 15 {
+                todo!()
+            } else {
+                match op {
+                    0 => self.regs.r[rd] = rrn & imm32,
+                    _ => todo!(),
+                }
+            }
         } else if inst & 0xf10 == 0x300 {
-            // bit field operations, saturation with shift
+            // bit field operations, saturation with shift (see 3.3.1)
             let op = (inst >> 5) & 7;
             let rn = (inst & 0xf) as usize;
             let rrn = self.regs.r[rn];
@@ -259,6 +319,41 @@ impl Cpu {
                 }
                 _ => todo!(),
             }
+        } else if inst & 0xf00 == 0xa00 {
+            // rows 3-7 of figure 3-5
+            let rn = (inst & 0xf) as usize;
+            let rrn = self.regs.r[rn];
+            let rd = ((inst_2 >> 8) & 0xf) as usize;
+            let rm = (inst_2 & 0xf) as usize;
+            if inst & 0x80 == 0 {
+                if inst_2 & 0x80 == 0 {
+                    // register controlled shift, table 3-27
+                    todo!();
+                } else {
+                    // sign or zero extension, with optional addition, table 3-28
+                    let op = (inst >> 4) & 7;
+                    if rn == 15 {
+                        match op {
+                            5 => {
+                                // UXTB
+                                let rot = (inst_2 as u32 >> 4) & 3;
+                                self.regs.r[rd] = rrn.rotate_right(rot * 8) as u8 as u32;
+                            }
+                            _ => todo!(),
+                        }
+                    } else {
+                        todo!(); // might hoist this
+                    }
+                }
+            } else {
+                if inst_2 & 0x80 == 0 {
+                    // SIMD add or subtract, table 3-29
+                    todo!();
+                } else {
+                    // other three register data processing, table 3-31
+                    todo!();
+                }
+            }
         } else {
             todo!("inst {inst:04x} not implemented");
         }
@@ -274,5 +369,15 @@ fn decode_imm_shift(inst_2: u16) -> (ShiftType, u32) {
         2 => (ShiftType::Asr, if imm5 == 0 { 32 } else { imm5 }),
         3 if imm5 == 0 => (ShiftType::Rrx, 1),
         _ => (ShiftType::Ror, imm5),
+    }
+}
+
+fn thumb_expand_imm(imm12: u16) -> u32 {
+    if (imm12 >> 10) == 0 {
+        const EXP: [u32; 4] = [1, 0x10001, 0x1000100, 0x1010101];
+        EXP[imm12 as usize >> 8] * (imm12 as u32 & 0xff)
+    } else {
+        let unrotated = 0x80 | (imm12 as u32 & 0x7f);
+        unrotated.rotate_right(imm12 as u32 >> 7)
     }
 }
