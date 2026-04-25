@@ -1,8 +1,10 @@
 pub struct Cpu {
     pub regs: Regs,
     mem: Vec<u8>,
+    pub halted: bool,
 }
 
+#[derive(Default, Clone)]
 pub struct Regs {
     pub r: [u32; 16],
     pub psr: u32,
@@ -17,6 +19,12 @@ pub enum ShiftType {
 }
 
 impl Cpu {
+    pub fn new(mem: Vec<u8>) -> Self {
+        let regs = Regs::default();
+        let halted = false;
+        Self { regs, mem, halted }
+    }
+
     pub fn load_u8(&self, addr: u32) -> u8 {
         self.mem[addr as usize]
     }
@@ -76,12 +84,5 @@ impl Cpu {
             ShiftType::Rrx => ((self.regs.psr << 2) & 0x80000000) | (val >> shift_n),
             ShiftType::Ror => val.rotate_right(shift_n),
         }
-    }
-
-    pub fn set_nz(&mut self, val: u32) {
-        let z = ((val == 0) as u32) << 30;
-        let nz = (val & 0x8000_0000) | z;
-        const NZ_MASK: u32 = 0xc000_0000;
-        self.regs.psr = (self.regs.psr & !NZ_MASK) | nz;
     }
 }

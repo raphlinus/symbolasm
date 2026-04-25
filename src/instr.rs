@@ -1,10 +1,13 @@
 use crate::cpu::{Cpu, ShiftType};
 
 impl Cpu {
-    fn step_instr(&mut self) {
+    pub fn step_instr(&mut self) {
         let inst_16 = self.load_u16(self.regs.r[15]);
+        println!("inst: {inst_16:04x}");
         self.regs.r[15] += 2;
         match inst_16 >> 12 {
+            0x2 => self.inst_2(inst_16),
+            0x3 => self.inst_3(inst_16),
             0x4 => self.inst_4(inst_16),
             0x5 => self.inst_5(inst_16),
             0x7 => self.inst_7(inst_16),
@@ -18,6 +21,30 @@ impl Cpu {
         }
     }
 
+    fn inst_2(&mut self, inst: u16) {
+        let imm8 = (inst & 0xff) as u32;
+        let rd = ((inst >> 8) & 7) as usize;
+        if inst & 0x800 == 0 {
+            // MOV (immediate, T1 encoding)
+            self.regs.r[rd] = imm8;
+        } else {
+            // CMP (immediate, T1 encoding)
+            _ = self.adc(self.regs.r[rd], !imm8, 1);
+        }
+    }
+
+    fn inst_3(&mut self, inst: u16) {
+        let imm8 = (inst & 0xff) as u32;
+        let rd = ((inst >> 8) & 7) as usize;
+        if inst & 0x800 == 0 {
+            // ADDS (immediate, T2 encoding)
+            self.regs.r[rd] = self.adc(self.regs.r[rd], imm8, 0);
+        } else {
+            // SUBS (immediate, T2 encoding)
+            self.regs.r[rd] = self.adc(self.regs.r[rd], !imm8, 1);
+        }
+    }
+
     fn inst_4(&mut self, inst: u16) {
         if inst & 0x400 == 0 {
             let op = (inst >> 6) & 0xf;
@@ -26,8 +53,8 @@ impl Cpu {
             let rrn = self.regs.r[rdn];
             let rrm = self.regs.r[rm];
             let val = match op {
-                0 => rrn & rrm, // EORS
-                1 => rrn ^ rrm, // EORS
+                0 => rrn & rrm,  // EORS
+                1 => rrn ^ rrm,  // EORS
                 12 => rrn | rrm, // ORRS
                 _ => todo!(),
             };
@@ -39,12 +66,24 @@ impl Cpu {
         }
     }
 
+    // Load and store (register offset) instructions, see table 3-9
     fn inst_5(&mut self, inst: u16) {
         let opcode = (inst >> 9) & 7;
         let rd = (inst & 7) as usize;
         let rn = ((inst >> 3) & 7) as usize;
         let rm = ((inst >> 6) & 7) as usize;
-        todo!()
+        let addr = self.regs.r[rn].wrapping_add(self.regs.r[rm]);
+        match opcode {
+            0 => self.store_u32(addr, self.regs.r[rd]),        // STR
+            1 => self.store_u16(addr, self.regs.r[rd] as u16), // STRH
+            2 => self.store_u8(addr, self.regs.r[rd] as u8),   // STB
+            3 => self.regs.r[rd] = self.load_u8(addr) as i8 as u32, // LDRSB
+            4 => self.regs.r[rd] = self.load_u32(addr),        // LDR
+            5 => self.regs.r[rd] = self.load_u16(addr) as u32, // LDRH
+            6 => self.regs.r[rd] = self.load_u8(addr) as u32, // LDRB
+            7 => self.regs.r[rd] = self.load_u16(addr) as i16 as u32, // LDRSH
+            _ => unreachable!(),
+        }
     }
 
     fn inst_7(&mut self, inst: u16) {
@@ -92,23 +131,27 @@ impl Cpu {
 
     // Miscellaneous instructions, see 3.2.1
     fn inst_b(&mut self, inst: u16) {
-            match (inst >> 8) & 0xf {
-                2 => {
-                    // sign/zero extend, see table 3-16
-                    let opc = (inst >> 6) & 3;
-                    let rm = ((inst >> 3) & 7) as usize;
-                    let rrm = self.regs.r[rm];
-                    let rd = (inst & 7) as usize;
-                    match opc {
-                        0 => self.regs.r[rd] = rrm as i16 as u32, // SXTH
-                        1 => self.regs.r[rd] = rrm as i8 as u32, // SXTB
-                        2 => self.regs.r[rd] = rrm as u16 as u32, // UXTH
-                        3 => self.regs.r[rd] = rrm as u8 as u32, // UXTB
-                        _ => unreachable!(),
-                    }
+        match (inst >> 8) & 0xf {
+            2 => {
+                // sign/zero extend, see table 3-16
+                let opc = (inst >> 6) & 3;
+                let rm = ((inst >> 3) & 7) as usize;
+                let rrm = self.regs.r[rm];
+                let rd = (inst & 7) as usize;
+                match opc {
+                    0 => self.regs.r[rd] = rrm as i16 as u32, // SXTH
+                    1 => self.regs.r[rd] = rrm as i8 as u32,  // SXTB
+                    2 => self.regs.r[rd] = rrm as u16 as u32, // UXTH
+                    3 => self.regs.r[rd] = rrm as u8 as u32,  // UXTB
+                    _ => unreachable!(),
                 }
-                _ => todo!(),
             }
+            14 => {
+                let bkpt = inst as u8;
+                self.syscall(bkpt);
+            }
+            _ => todo!(),
+        }
     }
 
     fn inst_c(&mut self, inst: u16) {
@@ -322,7 +365,6 @@ impl Cpu {
         } else if inst & 0xf00 == 0xa00 {
             // rows 3-7 of figure 3-5
             let rn = (inst & 0xf) as usize;
-            let rrn = self.regs.r[rn];
             let rd = ((inst_2 >> 8) & 0xf) as usize;
             let rm = (inst_2 & 0xf) as usize;
             if inst & 0x80 == 0 {
@@ -337,7 +379,8 @@ impl Cpu {
                             5 => {
                                 // UXTB
                                 let rot = (inst_2 as u32 >> 4) & 3;
-                                self.regs.r[rd] = rrn.rotate_right(rot * 8) as u8 as u32;
+                                self.regs.r[rd] =
+                                    self.regs.r[rm].rotate_right(rot * 8) as u8 as u32;
                             }
                             _ => todo!(),
                         }
@@ -345,14 +388,12 @@ impl Cpu {
                         todo!(); // might hoist this
                     }
                 }
+            } else if inst_2 & 0x80 == 0 {
+                // SIMD add or subtract, table 3-29
+                todo!();
             } else {
-                if inst_2 & 0x80 == 0 {
-                    // SIMD add or subtract, table 3-29
-                    todo!();
-                } else {
-                    // other three register data processing, table 3-31
-                    todo!();
-                }
+                // other three register data processing, table 3-31
+                todo!();
             }
         } else {
             todo!("inst {inst:04x} not implemented");

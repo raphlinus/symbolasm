@@ -1,6 +1,6 @@
 .section .text
 .global _start
  _start:
-    bx lr
+    mov r0, #0x21
+    bkpt 1
     bkpt 0
-    
