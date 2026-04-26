@@ -31,10 +31,11 @@ fn main() {
     if let Ok(Some((symtab, strtab))) = file.symbol_table() {
         for x in symtab.iter() {
             if let Ok(name) = strtab.get(x.st_name as usize)
-                && name == "_start" {
-                    start = x.st_value;
-                    println!("got _start = 0x{start:x}");
-                }
+                && name == "_start"
+            {
+                start = x.st_value & !1;
+                println!("got _start = 0x{start:x}");
+            }
         }
     }
 
@@ -49,6 +50,7 @@ fn main() {
     }
 
     let mut cpu = Cpu::new(mem);
+    cpu.regs.r[13] = 0x8000;
     cpu.regs.r[15] = start as u32;
     while !cpu.halted {
         cpu.step_instr();

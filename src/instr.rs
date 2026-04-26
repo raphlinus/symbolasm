@@ -46,12 +46,12 @@ impl Cpu {
     }
 
     fn inst_4(&mut self, inst: u16) {
-        if inst & 0x400 == 0 {
+        if inst & 0xc00 == 0 {
             let op = (inst >> 6) & 0xf;
-            let rdn = (inst & 7) as usize;
             let rm = ((inst >> 3) & 7) as usize;
-            let rrn = self.regs.r[rdn];
+            let rdn = (inst & 7) as usize;
             let rrm = self.regs.r[rm];
+            let rrn = self.regs.r[rdn];
             let val = match op {
                 0 => rrn & rrm,  // EORS
                 1 => rrn ^ rrm,  // EORS
@@ -60,9 +60,20 @@ impl Cpu {
             };
             self.regs.r[rdn] = val;
             self.set_nz(val);
-        } else {
+        } else if inst & 0x800 == 0 {
             // special data processing + branch/exchange
-            todo!();
+            if inst & 0xf00 == 0x600 {
+                // MOV (register, T1 encoding)
+                let rm = ((inst >> 3) & 0xf) as usize;
+                let rd = (((inst & 0x80) >> 4) | (inst & 7)) as usize;
+                let rrm = self.regs.r[rm];
+                self.regs.r[rd] = rrm;
+            } else {
+                todo!();
+            }
+        } else {
+            // load from literal pool
+            todo!()
         }
     }
 
@@ -80,7 +91,7 @@ impl Cpu {
             3 => self.regs.r[rd] = self.load_u8(addr) as i8 as u32, // LDRSB
             4 => self.regs.r[rd] = self.load_u32(addr),        // LDR
             5 => self.regs.r[rd] = self.load_u16(addr) as u32, // LDRH
-            6 => self.regs.r[rd] = self.load_u8(addr) as u32, // LDRB
+            6 => self.regs.r[rd] = self.load_u8(addr) as u32,  // LDRB
             7 => self.regs.r[rd] = self.load_u16(addr) as i16 as u32, // LDRSH
             _ => unreachable!(),
         }
@@ -145,6 +156,26 @@ impl Cpu {
                     3 => self.regs.r[rd] = rrm as u8 as u32,  // UXTB
                     _ => unreachable!(),
                 }
+            }
+            4 => {
+                // PUSH, T1 encoding, LR bit clear
+                let regs = inst & 0xff;
+                self.push_regs(regs);
+            }
+            5 => {
+                // PUSH, T1 encoding, LR bit set
+                let regs = (inst & 0xff) | (1 << 14);
+                self.push_regs(regs);
+            }
+            12 => {
+                // POP, T1 encoding, PC bit clear
+                let regs = inst & 0xff;
+                self.pop_regs(regs);
+            }
+            13 => {
+                // POP, T1 encoding, PC bit set
+                let regs = (inst & 0xff) | (1 << 15);
+                self.pop_regs(regs);
             }
             14 => {
                 let bkpt = inst as u8;
