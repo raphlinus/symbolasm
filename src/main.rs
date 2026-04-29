@@ -3,6 +3,7 @@ use elf::{ElfBytes, abi::PT_LOAD, endian::LittleEndian, segment::ProgramHeader};
 use crate::cpu::Cpu;
 
 mod arith;
+mod cond;
 mod cpu;
 mod instr;
 mod syscall;

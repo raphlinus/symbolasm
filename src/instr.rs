@@ -15,6 +15,7 @@ impl Cpu {
             0xa => self.inst_a(inst_16),
             0xb => self.inst_b(inst_16),
             0xc => self.inst_c(inst_16),
+            0xd => self.inst_d(inst_16),
             0xe => self.inst_e(inst_16),
             0xf => self.inst_f(inst_16),
             _ => todo!("inst {inst_16:04x} not implemented"),
@@ -211,9 +212,20 @@ impl Cpu {
         }
     }
 
+    fn inst_d(&mut self, inst: u16) {
+        // conditional branch, T1 encoding
+        let cond = (inst >> 8) & 0xf;
+        if self.eval_cond(cond) {
+            let imm8 = inst as i8 as u32;
+            self.regs.r[15] = self.regs.r[15].wrapping_add(imm8 << 1).wrapping_add(4);
+        }
+    }
+
     fn inst_e(&mut self, inst: u16) {
         if inst & 0x800 == 0 {
-            // TODO: unconditional branch
+            // unconditional branch, T1 encoding
+            let imm = (((inst as i32) << 21) >> 20) as u32;
+            self.regs.r[15] = self.regs.r[15].wrapping_add(imm).wrapping_add(4);
         } else {
             // 32 bit instructions
             let inst_2 = self.load_u16(self.regs.r[15]);
