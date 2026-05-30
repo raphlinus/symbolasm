@@ -65,6 +65,10 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             ',' => tokens.push(Token::new(loc, TokBody::Comma)),
             '=' => tokens.push(Token::new(loc, TokBody::Equals)),
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
+            '+' => tokens.push(Token::new(loc, TokBody::Plus)),
+            '-' => tokens.push(Token::new(loc, TokBody::Minus)),
+            '*' => tokens.push(Token::new(loc, TokBody::Asterisk)),
+            '/' => tokens.push(Token::new(loc, TokBody::Slash)),
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = ix + len;
                 while end < src.len() {
@@ -75,6 +79,25 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     end += c1.len_utf8();
                 }
                 tokens.push(Token::new(loc, TokBody::Idenfifier(src[ix..end].into())));
+                ix = end;
+                continue;
+            }
+            c if c.is_ascii_digit() => {
+                let mut val = (c as u8 - b'0') as i64;
+                let mut end = ix + 1;
+                if val == 0 && end >= src.len() && src.as_bytes()[end] == b'x' {
+                    todo!("hex literal");
+                }
+                while end < src.len() {
+                    let c1 = src.as_bytes()[end];
+                    if (b'0'..=b'9').contains(&c1) {
+                        val = (val * 10) + (c1 - b'0') as i64;
+                    } else if c1 != b'_' {
+                        break;
+                    }
+                    end += 1;
+                }
+                tokens.push(Token::new(loc, TokBody::Number(val)));
                 ix = end;
                 continue;
             }
@@ -114,6 +137,10 @@ impl TokBuf {
         } else {
             None
         }
+    }
+
+    pub fn back_one(&mut self) {
+        self.ix -= 1;
     }
 
     pub fn expect(&mut self, expected: &TokBody) -> Result<(), Error> {
