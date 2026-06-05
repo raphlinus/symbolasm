@@ -1,6 +1,9 @@
 //! Parsing
 
-use crate::{lex::{Error, TokBody, TokBuf, Token}, precedence::{self, Precedence}};
+use crate::{
+    lex::{Error, TokBody, TokBuf, Token},
+    precedence::{self, Precedence},
+};
 
 #[derive(Debug)]
 pub struct Program(Vec<Item>);
@@ -23,14 +26,16 @@ pub struct Args;
 #[derive(Debug)]
 pub enum Stmt {
     Label(String),
-    Assign(Expr, Expr),
+    /// Includes assignment ops as well as `Equals`
+    Assign(Expr, Token, Expr),
+    /// var @ reg = expr
+    AssignPlace(Expr, Token, Expr),
     Insn(Insn),
 }
 
 #[derive(Debug)]
 pub enum Insn {
     Bx(Expr),
-    Assign(Expr, Expr),
 }
 
 #[derive(Debug)]
@@ -50,7 +55,7 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
             let _fn_tok = toks.next().unwrap();
             let name = toks.next().ok_or("expected function name")?;
             if !matches!(name.tok, TokBody::Idenfifier(_)) {
-                return Err("function name must be identifier")?;
+                Err("function name must be identifier")?
             }
             let name = name.clone();
             let args = parse_args(toks)?;
@@ -101,11 +106,22 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
         }
         toks.back_one();
         let lhs = parse_expr(toks)?;
-        if toks.expect_opt(&TokBody::Equals) {
-            // TODO: validate that lhs is assignable
-            let rhs = parse_expr(toks)?;
-            toks.expect(&TokBody::Newline)?;
-            return Ok(Stmt::Assign(lhs, rhs));
+        if let Some(op) = toks.peek() {
+            if op.tok.is_assign_op() {
+                // TODO: validate that lhs is assignable
+                let op = toks.next().unwrap().clone();
+                let rhs = parse_expr(toks)?;
+                toks.expect(&TokBody::Newline)?;
+                return Ok(Stmt::Assign(lhs, op.clone(), rhs));
+            } else if op.tok == TokBody::At {
+                _ = toks.next();
+                let reg = toks.next().ok_or("expected reg")?.clone();
+                // TODO: ensure reg is valid register
+                toks.expect(&TokBody::Equals)?;
+                let rhs = parse_expr(toks)?;
+                toks.expect(&TokBody::Newline)?;
+                return Ok(Stmt::AssignPlace(lhs, reg, rhs));
+            }
         }
     }
     todo!()
@@ -132,7 +148,7 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
             break;
         }
     }
-    return Ok(lhs);
+    Ok(lhs)
 }
 
 fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {

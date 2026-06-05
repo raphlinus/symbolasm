@@ -4,6 +4,8 @@ fn main() {
     r1 = r2 * r3 + r4
     r1 = r2 * (r3 + r4)
     r5 = r5 + 42
+    r5 += 42
+    x @ r6 = r5
     bx lr
 end:
 }

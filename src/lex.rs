@@ -30,6 +30,10 @@ pub enum TokBody {
     Slash,
     Equals,
     Colon,
+    PlusEquals,
+    MinusEquals,
+    AsteriskEquals,
+    At,
 }
 
 pub type Error = Box<dyn std::error::Error>;
@@ -51,7 +55,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
     let mut ix = 0;
     while ix < src.len() {
         let c = src[ix..].chars().next().unwrap();
-        let len = c.len_utf8();
+        let mut len = c.len_utf8();
         let loc = Loc { offset: ix };
         match c {
             ' ' => (),
@@ -65,10 +69,32 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             ',' => tokens.push(Token::new(loc, TokBody::Comma)),
             '=' => tokens.push(Token::new(loc, TokBody::Equals)),
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
-            '+' => tokens.push(Token::new(loc, TokBody::Plus)),
-            '-' => tokens.push(Token::new(loc, TokBody::Minus)),
-            '*' => tokens.push(Token::new(loc, TokBody::Asterisk)),
+            '+' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'=') {
+                    tokens.push(Token::new(loc, TokBody::PlusEquals));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Plus));
+                }
+            }
+            '-' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'=') {
+                    tokens.push(Token::new(loc, TokBody::MinusEquals));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Minus));
+                }
+            }
+            '*' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'=') {
+                    tokens.push(Token::new(loc, TokBody::AsteriskEquals));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Asterisk));
+                }
+            }
             '/' => tokens.push(Token::new(loc, TokBody::Slash)),
+            '@' => tokens.push(Token::new(loc, TokBody::At)),
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = ix + len;
                 while end < src.len() {
@@ -116,6 +142,13 @@ impl TokBody {
         } else {
             false
         }
+    }
+
+    pub fn is_assign_op(&self) -> bool {
+        matches!(
+            self,
+            TokBody::Equals | TokBody::PlusEquals | TokBody::MinusEquals | TokBody::AsteriskEquals
+        )
     }
 }
 
