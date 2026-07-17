@@ -6,6 +6,10 @@ fn main() {
     r5 = r5 + 42
     r5 += 42
     x @ r6 = r5
-    bx lr
+    #(x - 1)
+    beq end
+    #(y @ r7 = x)
+    #(y -= 1)
 end:
+    bx lr
 }

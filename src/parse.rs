@@ -2,11 +2,11 @@
 
 use crate::{
     lex::{Error, TokBody, TokBuf, Token},
-    precedence::{self, Precedence},
+    precedence::Precedence,
 };
 
 #[derive(Debug)]
-pub struct Program(Vec<Item>);
+pub struct Program(pub Vec<Item>);
 
 #[derive(Debug)]
 pub enum Item {
@@ -15,9 +15,9 @@ pub enum Item {
 
 #[derive(Debug)]
 pub struct Function {
-    name: Token,
-    args: Args,
-    body: Vec<Stmt>,
+    pub name: Token,
+    pub args: Args,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug)]
@@ -30,12 +30,18 @@ pub enum Stmt {
     Assign(Expr, Token, Expr),
     /// var @ reg = expr
     AssignPlace(Expr, Token, Expr),
+    WithFlagsExpr(Expr),
+    WithFlagsAssign(Expr, Token, Expr),
+    WithFlagsAssignPlace(Expr, Token, Expr),
     Insn(Insn),
 }
 
 #[derive(Debug)]
 pub enum Insn {
     Bx(Expr),
+    BCond(String, String),
+    B(String),
+    Bl(String),
 }
 
 #[derive(Debug)]
@@ -102,6 +108,29 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 toks.expect(&TokBody::Newline)?;
                 return Ok(Stmt::Insn(Insn::Bx(dst)));
             }
+            // TODO: the rest of the conditions
+            "bne" | "beq" | "bcc" | "bcs" | "bpl" | "bmi" => {
+                let dst = toks.next().ok_or("expected label")?;
+                let TokBody::Idenfifier(label) = &dst.tok else {
+                    return Err("branch target must be identifier")?;
+                };
+                let cond = ident[1..].to_string();
+                return Ok(Stmt::Insn(Insn::BCond(cond, label.clone())));
+            }
+            "b" => {
+                let dst = toks.next().ok_or("expected label")?;
+                let TokBody::Idenfifier(label) = &dst.tok else {
+                    return Err("branch target must be identifier")?;
+                };
+                return Ok(Stmt::Insn(Insn::B(label.clone())));
+            }
+            "bl" => {
+                let dst = toks.next().ok_or("expected label")?;
+                let TokBody::Idenfifier(label) = &dst.tok else {
+                    return Err("branch target must be identifier")?;
+                };
+                return Ok(Stmt::Insn(Insn::Bl(label.clone())));
+            }
             _ => (),
         }
         toks.back_one();
@@ -123,6 +152,8 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 return Ok(Stmt::AssignPlace(lhs, reg, rhs));
             }
         }
+    } else if first.tok == TokBody::Octothorpe {
+        return parse_withflags(toks);
     }
     todo!()
 }
@@ -160,4 +191,28 @@ fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
         return Ok(expr);
     }
     Ok(Expr::Ident(first.clone()))
+}
+
+fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
+    toks.expect(&TokBody::OpenParen)?;
+    let lhs = parse_expr(toks)?;
+    let op = toks.next().ok_or("unexpected eof in #()")?;
+    if op.tok.is_assign_op() {
+        let op = toks.next().unwrap().clone();
+        let rhs = parse_expr(toks)?;
+        toks.expect(&TokBody::Newline)?;
+        return Ok(Stmt::WithFlagsAssign(lhs, op.clone(), rhs));
+    } else if op.tok == TokBody::At {
+        let reg = toks.next().ok_or("expected reg")?.clone();
+        // TODO: ensure reg is valid register
+        toks.expect(&TokBody::Equals)?;
+        let rhs = parse_expr(toks)?;
+        toks.expect(&TokBody::CloseParen)?;
+        toks.expect(&TokBody::Newline)?;
+        return Ok(Stmt::WithFlagsAssignPlace(lhs, reg, rhs));
+    } else if op.tok == TokBody::CloseParen {
+        toks.expect(&TokBody::Newline)?;
+        return Ok(Stmt::WithFlagsExpr(lhs));
+    }
+    todo!()
 }

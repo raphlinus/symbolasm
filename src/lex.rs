@@ -34,6 +34,7 @@ pub enum TokBody {
     MinusEquals,
     AsteriskEquals,
     At,
+    Octothorpe,
 }
 
 pub type Error = Box<dyn std::error::Error>;
@@ -95,6 +96,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             }
             '/' => tokens.push(Token::new(loc, TokBody::Slash)),
             '@' => tokens.push(Token::new(loc, TokBody::At)),
+            '#' => tokens.push(Token::new(loc, TokBody::Octothorpe)),
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = ix + len;
                 while end < src.len() {
@@ -202,5 +204,13 @@ impl TokBuf {
 
     pub fn eat_newlines(&mut self) {
         while self.expect_opt(&TokBody::Newline) {}
+    }
+
+    pub fn save(&self) -> usize {
+        self.ix
+    }
+
+    pub fn restore(&mut self, ix: usize) {
+        self.ix = ix;
     }
 }

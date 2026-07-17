@@ -1,5 +1,6 @@
-use crate::{lex::tokenize, parse::parse_program};
+use crate::{compile::FnScope, lex::tokenize, parse::parse_program};
 
+mod compile;
 mod lex;
 mod parse;
 mod precedence;
@@ -10,4 +11,12 @@ fn main() {
     let mut tokens = tokenize(&src).expect("error tokenizing file");
     let program = parse_program(&mut tokens).expect("parse error");
     println!("{program:#?}");
+    for item in &program.0 {
+        match item {
+            parse::Item::Function(func) => {
+                let mut scope = FnScope::default();
+                scope.compile(func);
+            },
+        }
+    }
 }
