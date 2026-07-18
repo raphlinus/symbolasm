@@ -1,9 +1,12 @@
 use crate::{compile::FnScope, lex::tokenize, parse::parse_program};
 
+mod bitset;
 mod compile;
 mod lex;
 mod parse;
 mod precedence;
+mod regmap;
+mod stmt;
 
 fn main() {
     let path = std::env::args().nth(1).expect("need filename");
@@ -15,8 +18,8 @@ fn main() {
         match item {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
-                scope.compile(func);
-            },
+                scope.compile(func).unwrap();
+            }
         }
     }
 }

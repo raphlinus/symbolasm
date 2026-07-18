@@ -1,5 +1,7 @@
 //! Tokenizer
 
+use crate::lex::TokBody::Idenfifier;
+
 /// Location in source file. Will expand to identify multiple files.
 #[derive(Clone, Debug)]
 pub struct Loc {
@@ -48,6 +50,14 @@ pub struct TokBuf {
 impl Token {
     fn new(loc: Loc, tok: TokBody) -> Self {
         Token { loc, tok }
+    }
+
+    pub fn as_ident(&self) -> Option<&str> {
+        if let TokBody::Idenfifier(id) = &self.tok {
+            Some(id)
+        } else {
+            None
+        }
     }
 }
 

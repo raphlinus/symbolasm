@@ -1,15 +1,16 @@
-fn main() {
-    r0 = r1
-    r1 = r2 + r3 * r4
+fn main(arg0) {
+    z @r1 = r2 + r3 * r4
     r1 = r2 * r3 + r4
     r1 = r2 * (r3 + r4)
     r5 = r5 + 42
     r5 += 42
     x @ r6 = r5
+loop:
     #(x - 1)
     beq end
     #(y @ r7 = x)
     #(y -= 1)
+    b loop
 end:
     bx lr
 }
