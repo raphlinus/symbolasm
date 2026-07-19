@@ -33,6 +33,7 @@ pub struct Arg {
 #[derive(Debug)]
 pub enum Expr {
     Ident(Token),
+    Literal(Token),
     Binop(Box<Expr>, Token, Box<Expr>),
 }
 
@@ -71,7 +72,7 @@ fn parse_args(toks: &mut TokBuf) -> Result<Args, Error> {
         } else if toks.expect_opt(&TokBody::CloseParen) {
             break;
         } else {
-            return Err("syntax error in args")?;
+            Err("syntax error in args")?;
         }
     }
     Ok(Args(args))
@@ -193,14 +194,17 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
 
 fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
     let first = toks.next().ok_or("unexpected eof in expr")?;
-    if first.tok == TokBody::OpenParen {
-        let expr = parse_expr(toks)?;
-        // TODO: handle comma for tuple formation
-        toks.expect(&TokBody::CloseParen)?;
-        return Ok(expr);
+    match first.tok {
+        TokBody::OpenParen => {
+            let expr = parse_expr(toks)?;
+            // TODO: handle comma for tuple formation
+            toks.expect(&TokBody::CloseParen)?;
+            Ok(expr)
+        }
+        TokBody::Idenfifier(_) => Ok(Expr::Ident(first.clone())),
+        TokBody::Number(_) => Ok(Expr::Literal(first.clone())),
+        _ => Err("unknown token for expr")?,
     }
-    // TODO: check that it is ident?
-    Ok(Expr::Ident(first.clone()))
 }
 
 fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
@@ -208,8 +212,9 @@ fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
     let lhs = parse_expr(toks)?;
     let op = toks.next().ok_or("unexpected eof in #()")?;
     if op.tok.is_assign_op() {
-        let op = toks.next().unwrap().clone();
+        let op = op.clone();
         let rhs = parse_expr(toks)?;
+        toks.expect(&TokBody::CloseParen)?;
         toks.expect(&TokBody::Newline)?;
         return Ok(Stmt::WithFlagsAssign(lhs, op.clone(), rhs));
     } else if op.tok == TokBody::At {

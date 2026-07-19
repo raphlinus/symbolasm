@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write};
 
 use crate::{
+    generate::gen_stmt,
     lex::Error,
     parse::Function,
     regmap::Regmap,
@@ -26,7 +27,7 @@ struct BasicBlock {
 }
 
 impl FnScope {
-    pub fn compile(&mut self, func: &Function) -> Result<(), Error> {
+    pub fn analyze(&mut self, func: &Function) -> Result<(), Error> {
         for (ix, stmt) in func.body.iter().enumerate() {
             if let Stmt::Label(l) = stmt {
                 if self.labels.insert(l.clone(), ix).is_some() {
@@ -39,7 +40,7 @@ impl FnScope {
         // Find all the basic blocks
         // Basic block 0 is function start
         self.start_basic_block(0);
-        self.basic_blocks[0].regmap.from_args(&func.args);
+        self.basic_blocks[0].regmap.init_from_args(&func.args);
 
         self.start_basic_block(0);
         self.add_edge(0, 1);
@@ -88,19 +89,6 @@ impl FnScope {
 
         self.propagate_regmaps();
 
-        for block in &self.basic_blocks[1..] {
-            let regmap = if let Some((pred, tail)) = block.pred.split_first() {
-                let mut regmap = self.basic_blocks[*pred].regmap.clone();
-                for ix in tail {
-                    regmap.intersect(&self.basic_blocks[*ix].regmap);
-                }
-                regmap
-            } else {
-                Regmap::default()
-            };
-            println!("bb start {}, {regmap:?}", block.start);
-        }
-
         //println!("{:#?}", self.basic_blocks);
         Ok(())
     }
@@ -141,6 +129,27 @@ impl FnScope {
     fn add_edge(&mut self, pred: usize, succ: usize) {
         self.basic_blocks[pred].succ.push(succ);
         self.basic_blocks[succ].pred.push(pred);
+    }
+
+    pub fn gen_function(&self, func: &Function, w: &mut impl Write) -> Result<(), Error> {
+        for block in &self.basic_blocks[1..] {
+            let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
+                let mut regmap = self.basic_blocks[*pred].regmap.clone();
+                for ix in tail {
+                    regmap.intersect(&self.basic_blocks[*ix].regmap);
+                }
+                regmap
+            } else {
+                Regmap::default()
+            };
+            for ix in block.start..block.end {
+                let stmt = &func.body[ix];
+                gen_stmt(stmt, &regmap, w)?;
+                regmap.apply(stmt);
+                //_ = writeln!(w, "{ix}: {regmap:?}");
+            }
+        }
+        Ok(())
     }
 }
 

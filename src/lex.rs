@@ -128,7 +128,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 }
                 while end < src.len() {
                     let c1 = src.as_bytes()[end];
-                    if (b'0'..=b'9').contains(&c1) {
+                    if c1.is_ascii_digit() {
                         val = (val * 10) + (c1 - b'0') as i64;
                     } else if c1 != b'_' {
                         break;

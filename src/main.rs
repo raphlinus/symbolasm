@@ -2,6 +2,7 @@ use crate::{compile::FnScope, lex::tokenize, parse::parse_program};
 
 mod bitset;
 mod compile;
+mod generate;
 mod lex;
 mod parse;
 mod precedence;
@@ -18,7 +19,8 @@ fn main() {
         match item {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
-                scope.compile(func).unwrap();
+                scope.analyze(func).unwrap();
+                scope.gen_function(func, &mut std::io::stdout()).unwrap();
             }
         }
     }

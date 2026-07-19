@@ -19,11 +19,11 @@ pub struct Regmap {
 }
 
 pub fn parse_register(s: &str) -> Option<u8> {
-    if s.starts_with('r') {
-        if let Ok(n) = s[1..].parse() {
-            if n < 16 {
-                return Some(n);
-            }
+    if let Some(tail) = s.strip_prefix('r') {
+        if let Ok(n) = tail.parse()
+            && n < 16
+        {
+            return Some(n);
         }
     }
     match s {
@@ -62,10 +62,10 @@ impl Regmap {
     }
 
     fn kill_expr(&mut self, lhs: &Expr) {
-        if let Some(id) = lhs.as_ident() {
-            if let Some(n) = parse_register(id) {
-                self.kill(n);
-            }
+        if let Some(id) = lhs.as_ident()
+            && let Some(n) = parse_register(id)
+        {
+            self.kill(n);
         }
         // TODO: also handle slice
     }
@@ -149,11 +149,19 @@ impl Regmap {
         }
     }
 
-    pub fn from_args(&mut self, args: &Args) {
+    pub fn init_from_args(&mut self, args: &Args) {
         for i in 0..args.0.len().min(4) {
             if let Some(id) = args.0[i].var.as_ident() {
                 self.place(id, i as u8);
             }
+        }
+    }
+
+    pub fn lookup(&self, id: &str) -> Option<u8> {
+        if let Some(reg) = self.var_places.get(id) {
+            *reg
+        } else {
+            None
         }
     }
 }
