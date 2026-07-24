@@ -123,13 +123,15 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             c if c.is_ascii_digit() => {
                 let mut val = (c as u8 - b'0') as i64;
                 let mut end = ix + 1;
-                if val == 0 && end >= src.len() && src.as_bytes()[end] == b'x' {
+                if val == 0 && end < src.len() && src.as_bytes()[end] == b'x' {
                     todo!("hex literal");
                 }
                 while end < src.len() {
                     let c1 = src.as_bytes()[end];
                     if c1.is_ascii_digit() {
                         val = (val * 10) + (c1 - b'0') as i64;
+                    } else if c1.is_ascii_alphabetic() {
+                        Err("trailing alphabetic in number")?;
                     } else if c1 != b'_' {
                         break;
                     }
@@ -139,7 +141,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 ix = end;
                 continue;
             }
-            _ => return Err(format!("unknown char {c}").into()),
+            _ => Err(format!("unknown char {c}"))?,
         }
         ix += len;
     }

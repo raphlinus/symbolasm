@@ -35,6 +35,7 @@ pub enum Expr {
     Ident(Token),
     Literal(Token),
     Binop(Box<Expr>, Token, Box<Expr>),
+    Unary(Token, Box<Expr>),
 }
 
 pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
@@ -162,6 +163,13 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 return Ok(Stmt::AssignPlace(lhs, reg, rhs));
             }
         }
+    } else if first.tok == TokBody::Asterisk {
+        toks.back_one();
+        let lhs = parse_expr(toks)?;
+        let op = toks.next().ok_or("eof in assignment")?.clone();
+        // TODO: maybe validate
+        let rhs = parse_expr(toks)?;
+        return Ok(Stmt::Assign(lhs, op, rhs));
     } else if first.tok == TokBody::Octothorpe {
         return parse_withflags(toks);
     }
@@ -203,6 +211,11 @@ fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
         }
         TokBody::Idenfifier(_) => Ok(Expr::Ident(first.clone())),
         TokBody::Number(_) => Ok(Expr::Literal(first.clone())),
+        TokBody::Asterisk => {
+            let first = first.clone();
+            let expr = parse_expr(toks)?;
+            Ok(Expr::Unary(first, expr.into()))
+        }
         _ => Err("unknown token for expr")?,
     }
 }
