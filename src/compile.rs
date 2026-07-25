@@ -1,11 +1,13 @@
 use std::{collections::HashMap, io::Write};
 
 use crate::{
-    generate::gen_stmt,
+    generate::{gen_from_ir, gen_stmt},
+    ir::IrCtx,
     lex::Error,
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
+    types::TypePool,
 };
 
 #[derive(Debug, Default)]
@@ -131,7 +133,12 @@ impl FnScope {
         self.basic_blocks[succ].pred.push(pred);
     }
 
-    pub fn gen_function(&self, func: &Function, w: &mut impl Write) -> Result<(), Error> {
+    pub fn gen_function(
+        &self,
+        func: &Function,
+        types: &mut TypePool,
+        w: &mut impl Write,
+    ) -> Result<(), Error> {
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
                 let mut regmap = self.basic_blocks[*pred].regmap.clone();
@@ -144,7 +151,13 @@ impl FnScope {
             };
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
-                gen_stmt(stmt, &regmap, w)?;
+                if IrCtx::can_lower(stmt) {
+                    let mut ir_ctx = IrCtx::new(&regmap, types);
+                    let ir = ir_ctx.lower(stmt)?;
+                    gen_from_ir(&ir, w)?;
+                } else {
+                    gen_stmt(stmt, &regmap, w)?;
+                }
                 regmap.apply(stmt);
                 //_ = writeln!(w, "{ix}: {regmap:?}");
             }

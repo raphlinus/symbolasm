@@ -27,7 +27,13 @@ pub struct Args(pub Vec<Arg>);
 #[derive(Debug)]
 pub struct Arg {
     pub var: Token,
-    // TODO: optional type
+    pub ty: Option<Type>,
+}
+
+#[derive(Debug)]
+pub enum Type {
+    Ident(Token),
+    Ptr(Box<Type>),
 }
 
 #[derive(Debug)]
@@ -82,9 +88,26 @@ fn parse_args(toks: &mut TokBuf) -> Result<Args, Error> {
 fn parse_arg(toks: &mut TokBuf) -> Result<Arg, Error> {
     let tok = toks.next().ok_or("unexpected eof in arg")?;
     if matches!(tok.tok, TokBody::Idenfifier(_)) {
-        Ok(Arg { var: tok.clone() })
+        let var = tok.clone();
+        let mut ty = None;
+        if toks.expect_opt(&TokBody::Colon) {
+            ty = Some(parse_type(toks)?);
+        }
+        Ok(Arg { var, ty })
     } else {
         Err("expected arg to be identifier")?
+    }
+}
+
+fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
+    let first = toks.next().ok_or("expected type")?;
+    match &first.tok {
+        TokBody::Idenfifier(_) => Ok(Type::Ident(first.clone())),
+        TokBody::Asterisk => {
+            let expr = parse_type(toks)?;
+            Ok(Type::Ptr(expr.into()))
+        }
+        _ => Err("unknown type")?,
     }
 }
 
