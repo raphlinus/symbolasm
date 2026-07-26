@@ -67,4 +67,18 @@ impl TypePool {
             }
         }
     }
+
+    pub fn pointee(&self, handle: TypeHandle) -> Option<&Type> {
+        if let Type::Ptr(p) = self.get(handle) {
+            Some(self.get(*p))
+        } else {
+            None
+        }
+    }
+}
+
+impl Type {
+    pub fn is_signed(&self) -> bool {
+        matches!(self, Type::I8 | Type::I16 | Type::I32)
+    }
 }

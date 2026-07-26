@@ -1,16 +1,24 @@
-fn main(arg0) {
-    z @r1 = r2 + r3 * r4
-    r1 = r2 * r3 + r4
-    r1 = r2 * (r3 + r4)
-    r5 = r5 + 42
-    r5 += 42
-    x @ r6 = r5
+fn main(arg0: *i8) {
+    x @r1 = *(arg0 as *i8)
+    *(arg0 as *i16) = x
+    z @r3 = x
+    z += x
+    #(z - 4)
 loop:
-    #(x - 1)
-    beq end
-    #(y @ r7 = x)
-    #(y -= 1)
-    b loop
-end:
+    #(x -= 1)
+    y @r2 = x
+    bne loop
+    x = y ^ z
+    x = y | z
+    x = y & z
+    x = y << 1
+    x = y >> 1
+    x = y as i32 >> 1
+    x = -y
+    x = !y
+    x = 1
+    x = y + (y << 1)
+    x = y + (y >> 1)
+    x = y + (y as i32 >> 1)
     bx lr
 }

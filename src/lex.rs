@@ -37,6 +37,14 @@ pub enum TokBody {
     AsteriskEquals,
     At,
     Octothorpe,
+    Ampersand,
+    Pipe,
+    Caret,
+    Exclamation,
+    Less,
+    LessLess,
+    Greater,
+    GreaterGreater,
 }
 
 pub type Error = Box<dyn std::error::Error>;
@@ -107,6 +115,26 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             '/' => tokens.push(Token::new(loc, TokBody::Slash)),
             '@' => tokens.push(Token::new(loc, TokBody::At)),
             '#' => tokens.push(Token::new(loc, TokBody::Octothorpe)),
+            '&' => tokens.push(Token::new(loc, TokBody::Ampersand)),
+            '|' => tokens.push(Token::new(loc, TokBody::Pipe)),
+            '^' => tokens.push(Token::new(loc, TokBody::Caret)),
+            '!' => tokens.push(Token::new(loc, TokBody::Exclamation)),
+            '<' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'<') {
+                    tokens.push(Token::new(loc, TokBody::LessLess));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Less));
+                }
+            }
+            '>' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'>') {
+                    tokens.push(Token::new(loc, TokBody::GreaterGreater));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Greater));
+                }
+            }
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = ix + len;
                 while end < src.len() {

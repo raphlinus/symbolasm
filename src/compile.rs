@@ -1,7 +1,7 @@
 use std::{collections::HashMap, io::Write};
 
 use crate::{
-    generate::{gen_from_ir, gen_stmt},
+    generate::{GenCtx, gen_stmt},
     ir::IrCtx,
     lex::Error,
     parse::Function,
@@ -154,7 +154,8 @@ impl FnScope {
                 if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types);
                     let ir = ir_ctx.lower(stmt)?;
-                    gen_from_ir(&ir, w)?;
+                    let mut gen_ctx = GenCtx::new(types, w);
+                    gen_ctx.gen_from_ir(&ir)?;
                 } else {
                     gen_stmt(stmt, &regmap, w)?;
                 }

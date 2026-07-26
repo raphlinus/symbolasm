@@ -78,6 +78,11 @@ impl BinOp {
             TokBody::Asterisk => BinOp::Mul,
             TokBody::Minus => BinOp::Sub,
             TokBody::Slash => BinOp::Div,
+            TokBody::Ampersand => BinOp::And,
+            TokBody::Pipe => BinOp::Orr,
+            TokBody::Caret => BinOp::Eor,
+            TokBody::LessLess => BinOp::Shl,
+            TokBody::GreaterGreater => BinOp::Shr,
             _ => return None,
         })
     }
@@ -96,6 +101,7 @@ impl UnaryOp {
     fn from_tok(tok: &TokBody) -> Option<Self> {
         Some(match tok {
             TokBody::Minus => UnaryOp::Neg,
+            TokBody::Exclamation => UnaryOp::Not,
             TokBody::Asterisk => UnaryOp::Deref,
             _ => return None,
         })
@@ -217,24 +223,37 @@ impl<'a> IrCtx<'a> {
                 let lhs = self.lower_expr(lhs, None)?;
                 let rhs = self.lower_expr(rhs, None)?;
                 let op = BinOp::from_tok(&op.tok).ok_or("unknown binop")?;
-                // TODO: better type inference etc
-                let ty = TypeHandle::default();
+                let ty = lhs.ty;
                 let body = Body::Binop(lhs.into(), op, rhs.into());
                 Ok(Expr { ty, body })
             }
             parse::Expr::Unary(op, expr) => {
                 let expr = self.lower_expr(expr, None)?;
                 let op = UnaryOp::from_tok(&op.tok).ok_or("unknown unary op")?;
-                // TODO: better type inference etc
-                let ty = TypeHandle::default();
+                let ty = match op {
+                    UnaryOp::Deref => match self.types.get(expr.ty) {
+                        Type::Ptr(target) => *target,
+                        _ => TypeHandle::default(),
+                    },
+                    UnaryOp::Neg | UnaryOp::Not => expr.ty,
+                    _ => todo!("unhandled unary op"),
+                };
                 let body = Body::Unary(op, expr.into());
                 Ok(Expr { ty, body })
+            }
+            parse::Expr::Cast(lhs, ty) => {
+                let mut expr = self.lower_expr(lhs, place)?;
+                let ty = self.types.from_ast(ty)?;
+                // Here we choose not to have a separate cast expr, but that might
+                // be useful later.
+                expr.ty = ty;
+                Ok(expr)
             }
         }
     }
 
     fn type_of_ident(&mut self, id: &str) -> Option<TypeHandle> {
         // TODO: symbol lookup etc
-        Some(self.types.get_handle(&Type::Default))
+        Some(TypeHandle::default())
     }
 }

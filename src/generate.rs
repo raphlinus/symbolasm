@@ -8,116 +8,220 @@ use std::io::Write;
 use crate::{
     ir::{Assign, BinOp, Body, Expr, Ir, UnaryOp},
     lex::{Error, TokBody, Token},
-    parse,
     regmap::{Regmap, parse_register},
     stmt::Stmt,
+    types::{Type, TypePool},
 };
 
-pub fn gen_from_ir(ir: &Ir, w: &mut impl Write) -> Result<(), Error> {
-    match ir {
-        Ir::Assign(assign) => gen_assign(assign, w),
-        Ir::WithFlags(expr) => gen_withflags(expr, w),
-        _ => todo!(),
-    }
+pub struct GenCtx<'a, W: Write> {
+    types: &'a mut TypePool,
+    w: &'a mut W,
 }
 
-fn gen_assign(assign: &Assign, w: &mut impl Write) -> Result<(), Error> {
-    match assign {
-        Assign {
-            with_flags,
-            lhs: Expr {
-                body: Body::Reg(lhs),
-                ..
-            },
-            rhs,
-        } => gen_assign_reg(*lhs, rhs, *with_flags, w),
-        Assign {
-            with_flags: _,
-            lhs:
-                Expr {
-                    body: Body::Unary(UnaryOp::Deref, addr),
-                    ..
-                },
-            rhs,
-        } => gen_store(addr, rhs, w),
-        _ => todo!(),
-    }
+#[derive(Clone, Copy, PartialEq)]
+enum WithFlags {
+    No,
+    DontCare,
+    Yes,
 }
 
-fn gen_assign_reg(lhs: u8, rhs: &Expr, with_flags: bool, w: &mut impl Write) -> Result<(), Error> {
-    match &rhs.body {
-        Body::Reg(r) => writeln!(w, "    mov{} r{lhs}, r{r}", s(with_flags))?,
-        Body::Unary(UnaryOp::Deref, rhs) => {
-            write!(w, "    ldr ")?;
-            write_reg(lhs, w)?;
-            write!(w, ", ")?;
-            gen_addr(rhs, w)?;
-            writeln!(w)?;
+impl<'a, W: Write> GenCtx<'a, W> {
+    pub fn new(types: &'a mut TypePool, w: &'a mut W) -> Self {
+        Self { types, w }
+    }
+
+    pub fn gen_from_ir(&mut self, ir: &Ir) -> Result<(), Error> {
+        //println!("{ir:?}");
+        match ir {
+            Ir::Assign(assign) => self.gen_assign(assign),
+            Ir::WithFlags(expr) => self.gen_withflags(expr),
         }
-        Body::Binop(a, op, b) => {
-            write!(w, "    {}{} ", insn_for_binop(*op), s(with_flags))?;
-            write_reg(lhs, w)?;
-            write!(w, ", ")?;
-            if let Body::Reg(r) = &a.body {
-                write_reg(*r, w)?;
-            } else {
-                // TODO: rsb
-                Err("left operand of binop must be reg")?;
+    }
+
+    fn gen_assign(&mut self, assign: &Assign) -> Result<(), Error> {
+        match assign {
+            Assign {
+                with_flags,
+                lhs:
+                    Expr {
+                        body: Body::Reg(lhs),
+                        ..
+                    },
+                rhs,
+            } => self.gen_assign_reg(*lhs, rhs, (*with_flags).into()),
+            Assign {
+                with_flags: _,
+                lhs:
+                    Expr {
+                        body: Body::Unary(UnaryOp::Deref, addr),
+                        ..
+                    },
+                rhs,
+            } => self.gen_store(addr, rhs),
+            _ => todo!(),
+        }
+    }
+
+    fn gen_assign_reg(&mut self, lhs: u8, rhs: &Expr, with_flags: WithFlags) -> Result<(), Error> {
+        match &rhs.body {
+            Body::Reg(r) => {
+                write!(self.w, "    mov{} ", s(with_flags))?;
+                write_reg(lhs, self.w)?;
+                write!(self.w, ", ")?;
+                write_reg(*r, self.w)?;
+                writeln!(self.w)?;
             }
-            write!(w, ", ")?;
-            gen_operand2(b, w)?;
-            writeln!(w)?;
-        }
-        _ => todo!(),
-    }
-    Ok(())
-}
-
-fn gen_store(addr: &Expr, rhs: &Expr, w: &mut impl Write) -> Result<(), Error> {
-    if let Body::Reg(r) = &rhs.body {
-        write!(w, "    str ")?;
-        write_reg(*r, w)?;
-        write!(w, ", ")?;
-        gen_addr(addr, w)?;
-        writeln!(w)?;
-    } else {
-        Err("store instructions only take registers")?;
-    }
-    Ok(())
-}
-
-fn gen_withflags(expr: &Expr, w: &mut impl Write) -> Result<(), Error> {
-    match &expr.body {
-        Body::Binop(a, op, b) => {
-            let insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
-            write!(w, "    {insn} ",)?;
-            if let Body::Reg(r) = &a.body {
-                write_reg(*r, w)?;
-            } else {
-                // TODO: rsb
-                Err("left operand of binop must be reg")?;
+            Body::Imm(n) => {
+                // TODO: more sophistication about immediate size
+                // can be mvn if !n is imm12
+                // falls back to ldr
+                write!(self.w, "    mov{} ", s(with_flags))?;
+                write_reg(lhs, self.w)?;
+                writeln!(self.w, ", #{n}")?;
             }
-            write!(w, ", ")?;
-            gen_operand2(b, w)?;
-            writeln!(w)?;
+            Body::Unary(UnaryOp::Deref, rhs) => {
+                let insn = match self.types.pointee(rhs.ty) {
+                    Some(Type::U8) => "ldrb",
+                    Some(Type::U16) => "ldrh",
+                    Some(Type::I8) => "ldrsb",
+                    Some(Type::I16) => "ldrsh",
+                    _ => "ldr",
+                };
+                write!(self.w, "    {insn} ")?;
+                write_reg(lhs, self.w)?;
+                write!(self.w, ", ")?;
+                self.gen_addr(rhs)?;
+                writeln!(self.w)?;
+            }
+            Body::Unary(UnaryOp::Neg, rhs) => {
+                if let Body::Reg(r) = &rhs.body {
+                    write!(self.w, "    rsb{} ", s(with_flags))?;
+                    write_reg(lhs, self.w)?;
+                    write!(self.w, ", ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #0")?;
+                } else {
+                    Err("negation must be applied to register")?;
+                }
+            }
+            Body::Unary(UnaryOp::Not, rhs) => {
+                write!(self.w, "    mvn{} ", s(with_flags))?;
+                write_reg(lhs, self.w)?;
+                write!(self.w, ", ")?;
+                self.gen_operand2(rhs)?;
+                writeln!(self.w)?;
+            }
+            Body::Binop(a, op, b) => {
+                let ty = self.types.get(a.ty);
+                write!(self.w, "    {}{} ", insn_for_binop(*op, ty), s(with_flags))?;
+                write_reg(lhs, self.w)?;
+                write!(self.w, ", ")?;
+                if let Body::Reg(r) = &a.body {
+                    write_reg(*r, self.w)?;
+                } else {
+                    // TODO: rsb
+                    Err("left operand of binop must be reg")?;
+                }
+                write!(self.w, ", ")?;
+                // TODO: shifts aren't operand2; add and sub allow imm12
+                // also match orn and bic
+                self.gen_operand2(b)?;
+                writeln!(self.w)?;
+            }
+            _ => todo!(),
         }
-        _ => Err("test expr must be binop")?,
+        Ok(())
     }
-    Ok(())
-}
 
-fn gen_operand2(expr: &Expr, w: &mut impl Write) -> Result<(), Error> {
-    match &expr.body {
-        Body::Reg(r) => {
-            write_reg(*r, w)?;
+    fn gen_store(&mut self, addr: &Expr, rhs: &Expr) -> Result<(), Error> {
+        if let Body::Reg(r) = &rhs.body {
+            let insn = match self.types.pointee(addr.ty) {
+                Some(Type::U8 | Type::I8) => "strb",
+                Some(Type::U16 | Type::I16) => "strh",
+                _ => "str",
+            };
+            write!(self.w, "    {insn} ")?;
+            write_reg(*r, self.w)?;
+            write!(self.w, ", ")?;
+            self.gen_addr(addr)?;
+            writeln!(self.w)?;
+        } else {
+            Err("store instructions only take registers")?;
         }
-        Body::Imm(val) => {
-            // we can validate it's suitable for operand2 here, or be looser for mov, add, sub
-            write!(w, "#{val}")?;
-        }
-        _ => Err("unhandled operand2")?,
+        Ok(())
     }
-    Ok(())
+
+    fn gen_withflags(&mut self, expr: &Expr) -> Result<(), Error> {
+        match &expr.body {
+            Body::Binop(a, op, b) => {
+                let insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
+                write!(self.w, "    {insn} ",)?;
+                if let Body::Reg(r) = &a.body {
+                    write_reg(*r, self.w)?;
+                } else {
+                    // TODO: rsb
+                    Err("left operand of binop must be reg")?;
+                }
+                write!(self.w, ", ")?;
+                self.gen_operand2(b)?;
+                writeln!(self.w)?;
+            }
+            _ => Err("test expr must be binop")?,
+        }
+        Ok(())
+    }
+
+    fn gen_operand2(&mut self, expr: &Expr) -> Result<(), Error> {
+        match &expr.body {
+            Body::Reg(r) => write_reg(*r, self.w)?,
+            Body::Imm(val) => {
+                // we can validate it's suitable for operand2 here, or be looser for mov, add, sub
+                write!(self.w, "#{val}")?;
+            }
+            Body::Binop(lhs, op, rhs) => {
+                let opsh = match op {
+                    BinOp::Shl => "lsl",
+                    BinOp::Shr => {
+                        if self.types.get(lhs.ty).is_signed() {
+                            "asr"
+                        } else {
+                            "lsr"
+                        }
+                    }
+                    _ => Err("invalid binop in operand2")?,
+                };
+                let Body::Reg(basereg) = &lhs.body else {
+                    return Err("lhs of operand2 must be register")?;
+                };
+                write_reg(*basereg, self.w)?;
+                write!(self.w, ", {opsh} ")?;
+                self.gen_shift_amt(rhs)?;
+            }
+            _ => Err("unhandled operand2")?,
+        }
+        Ok(())
+    }
+
+    fn gen_shift_amt(&mut self, expr: &Expr) -> Result<(), Error> {
+        match &expr.body {
+            Body::Reg(r) => write_reg(*r, self.w)?,
+            Body::Imm(val) => write!(self.w, "#{val}")?,
+            _ => Err("invalid shift amount")?,
+        }
+        Ok(())
+    }
+
+    fn gen_addr(&mut self, addr: &Expr) -> Result<(), Error> {
+        match &addr.body {
+            Body::Reg(r) => {
+                write!(self.w, "[")?;
+                write_reg(*r, self.w)?;
+                write!(self.w, "]")?;
+            }
+            _ => todo!(),
+        }
+        Ok(())
+    }
 }
 
 pub fn gen_stmt(stmt: &Stmt, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
@@ -155,8 +259,12 @@ fn write_var_reg(id: &str, regmap: &Regmap, w: &mut impl Write) -> Result<(), Er
     Ok(())
 }
 
-fn s(with_flags: bool) -> &'static str {
-    if with_flags { "s" } else { "" }
+fn s(with_flags: WithFlags) -> &'static str {
+    if with_flags == WithFlags::Yes {
+        "s"
+    } else {
+        ""
+    }
 }
 
 #[expect(unused)]
@@ -186,7 +294,7 @@ fn is_imm8m(val: u32) -> bool {
         || (val << val.leading_zeros()) & 0xff_ffff == 0
 }
 
-fn insn_for_binop(binop: BinOp) -> &'static str {
+fn insn_for_binop(binop: BinOp, ty: &Type) -> &'static str {
     match binop {
         BinOp::Add => "add",
         BinOp::Sub => "sub",
@@ -196,8 +304,13 @@ fn insn_for_binop(binop: BinOp) -> &'static str {
         BinOp::Orr => "orr",
         BinOp::Eor => "eor",
         BinOp::Shl => "lsl",
-        // TODO: sign
-        BinOp::Shr => "lsr",
+        BinOp::Shr => {
+            if ty.is_signed() {
+                "asr"
+            } else {
+                "lsr"
+            }
+        }
     }
 }
 
@@ -211,18 +324,6 @@ fn test_insn_for_binop(binop: BinOp) -> Option<&'static str> {
     })
 }
 
-fn gen_addr(addr: &Expr, w: &mut impl Write) -> Result<(), Error> {
-    match &addr.body {
-        Body::Reg(r) => {
-            write!(w, "[")?;
-            write_reg(*r, w)?;
-            write!(w, "]")?;
-        }
-        _ => todo!(),
-    }
-    Ok(())
-}
-
 fn write_reg(reg: u8, w: &mut impl Write) -> Result<(), Error> {
     match reg {
         13 => write!(w, "sp")?,
@@ -231,4 +332,10 @@ fn write_reg(reg: u8, w: &mut impl Write) -> Result<(), Error> {
         _ => write!(w, "r{reg}")?,
     }
     Ok(())
+}
+
+impl From<bool> for WithFlags {
+    fn from(value: bool) -> Self {
+        if value { WithFlags::Yes } else { WithFlags::No }
+    }
 }

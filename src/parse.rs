@@ -42,6 +42,7 @@ pub enum Expr {
     Literal(Token),
     Binop(Box<Expr>, Token, Box<Expr>),
     Unary(Token, Box<Expr>),
+    Cast(Box<Expr>, Type),
 }
 
 pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
@@ -215,6 +216,9 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
                 toks.back_one();
                 break;
             }
+        } else if op.as_ident() == Some("as") && Precedence::Cast <= precedence {
+            let ty = parse_type(toks)?;
+            lhs = Expr::Cast(Box::new(lhs), ty);
         } else {
             toks.back_one();
             break;
@@ -234,7 +238,7 @@ fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
         }
         TokBody::Idenfifier(_) => Ok(Expr::Ident(first.clone())),
         TokBody::Number(_) => Ok(Expr::Literal(first.clone())),
-        TokBody::Asterisk => {
+        TokBody::Asterisk | TokBody::Minus | TokBody::Exclamation => {
             let first = first.clone();
             let expr = parse_expr(toks)?;
             Ok(Expr::Unary(first, expr.into()))
