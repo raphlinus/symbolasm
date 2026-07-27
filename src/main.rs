@@ -9,6 +9,7 @@ mod parse;
 mod precedence;
 mod regmap;
 mod stmt;
+mod typeinf;
 mod types;
 
 fn main() {

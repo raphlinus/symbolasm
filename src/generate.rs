@@ -224,6 +224,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
     }
 }
 
+// This should probably also move into GenCtx, but will still take regmap
 pub fn gen_stmt(stmt: &Stmt, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
     match stmt {
         Stmt::Label(l) => {

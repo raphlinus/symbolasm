@@ -1,6 +1,7 @@
 use crate::lex::Token;
 use crate::parse;
 use crate::regmap::parse_register;
+use crate::typeinf::TypeMap;
 use crate::{
     lex::{Error, TokBody},
     regmap::Regmap,
@@ -68,7 +69,7 @@ pub enum UnaryOp {
 pub struct IrCtx<'a> {
     regmap: &'a Regmap,
     types: &'a mut TypePool,
-    // some symbol table stuff goes here
+    typemap: &'a TypeMap,
 }
 
 impl BinOp {
@@ -132,8 +133,12 @@ impl Place {
 }
 
 impl<'a> IrCtx<'a> {
-    pub fn new(regmap: &'a Regmap, types: &'a mut TypePool) -> Self {
-        Self { regmap, types }
+    pub fn new(regmap: &'a Regmap, types: &'a mut TypePool, typemap: &'a TypeMap) -> Self {
+        Self {
+            regmap,
+            types,
+            typemap,
+        }
     }
 
     pub fn can_lower(stmt: &Stmt) -> bool {
@@ -254,6 +259,10 @@ impl<'a> IrCtx<'a> {
 
     fn type_of_ident(&mut self, id: &str) -> Option<TypeHandle> {
         // TODO: symbol lookup etc
-        Some(TypeHandle::default())
+        if let Some(ty) = self.typemap.lookup(id) {
+            Some(ty)
+        } else {
+            Some(TypeHandle::default())
+        }
     }
 }

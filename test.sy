@@ -1,7 +1,7 @@
 fn main(arg0: *i8) {
-    x @r1 = *(arg0 as *i8)
+    x @r1 = *arg0
     *(arg0 as *i16) = x
-    z @r3 = x
+    z @r3 = x >> 1
     z += x
     #(z - 4)
 loop:

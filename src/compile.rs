@@ -7,6 +7,7 @@ use crate::{
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
+    typeinf::TypeMap,
     types::TypePool,
 };
 
@@ -139,6 +140,7 @@ impl FnScope {
         types: &mut TypePool,
         w: &mut impl Write,
     ) -> Result<(), Error> {
+        let typemap = TypeMap::infer(func, types)?;
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
                 let mut regmap = self.basic_blocks[*pred].regmap.clone();
@@ -152,7 +154,7 @@ impl FnScope {
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
                 if IrCtx::can_lower(stmt) {
-                    let mut ir_ctx = IrCtx::new(&regmap, types);
+                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap);
                     let ir = ir_ctx.lower(stmt)?;
                     let mut gen_ctx = GenCtx::new(types, w);
                     gen_ctx.gen_from_ir(&ir)?;
