@@ -37,7 +37,9 @@ pub enum Body {
     Imm(u32),
     Binop(Box<Expr>, BinOp, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
-    // more to come
+    // a legit question is whether this should be a separate expr
+    // or whether it should be *(base + offset)
+    Field(Box<Expr>, usize),
 }
 
 struct Place {
@@ -205,7 +207,9 @@ impl<'a> IrCtx<'a> {
             parse::Expr::Ident(tok) => {
                 let id = tok.as_ident().unwrap();
                 let ty = self.type_of_ident(id).ok_or("type lookup failed")?;
-                let reg = if let Some(reg) = place.map(|p| p.lookup(id)).flatten() {
+                let reg = if let Some(reg) = place.and_then(|p| p.lookup(id)) {
+                    reg
+                } else if let Some(reg) = parse_register(id) {
                     reg
                 } else {
                     self.regmap
@@ -248,11 +252,28 @@ impl<'a> IrCtx<'a> {
             }
             parse::Expr::Cast(lhs, ty) => {
                 let mut expr = self.lower_expr(lhs, place)?;
-                let ty = self.types.from_ast(ty)?;
+                let ty = self.types.intern_from_ast(ty)?;
                 // Here we choose not to have a separate cast expr, but that might
                 // be useful later.
                 expr.ty = ty;
                 Ok(expr)
+            }
+            parse::Expr::Field(expr, field) => {
+                let expr = self.lower_expr(expr, None)?;
+                // TODO: support s.a.b, in which case the type is a struct
+                let Type::Ptr(struct_ty) = self.types.get(expr.ty) else {
+                    return Err("base must be pointer")?;
+                };
+                let Type::Struct(struct_handle) = self.types.get(*struct_ty) else {
+                    return Err("base must be pointer to struct")?;
+                };
+                let field = self
+                    .types
+                    .get_field(*struct_handle, field.as_ident().unwrap())
+                    .ok_or("field not found")?;
+                let ty = field.ty;
+                let body = Body::Field(expr.into(), field.offset);
+                Ok(Expr { ty, body })
             }
         }
     }

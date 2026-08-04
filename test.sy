@@ -1,4 +1,9 @@
-fn main(arg0: *i8) {
+struct List {
+    val: u32
+    next: *List
+}
+
+fn main(arg0: *i8, arg1: *List) {
     x @r1 = *arg0
     *(arg0 as *i16) = x
     z @r3 = x >> 1
@@ -20,5 +25,20 @@ loop:
     x = y + (y << 1)
     x = y + (y >> 1)
     x = y + (y as i32 >> 1)
+    bx lr
+}
+
+fn list_len(list: *List) {
+    len @r1 = 0
+    cbz list, done
+loop:
+    val @r2 = list.val
+    val += 1
+    list.val = val
+    list = list.next
+    len += 1
+    cbnz list, loop
+done:
+    r0 = len
     bx lr
 }

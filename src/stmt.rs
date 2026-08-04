@@ -19,6 +19,8 @@ pub enum Insn {
     BCond(String, String),
     B(String),
     Bl(String),
+    Cbz(Expr, String),
+    Cbnz(Expr, String),
 }
 
 pub enum Var {

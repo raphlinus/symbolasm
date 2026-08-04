@@ -20,6 +20,20 @@ fn main() {
     let mut types = TypePool::new();
     println!("{program:#?}");
     for item in &program.0 {
+        if let parse::Item::Struct(s) = item {
+            types.register_struct(s).unwrap();
+        }
+    }
+    // Note: this requires define before use for struct inclusion.
+    // No problem for pointers though, just inclusion.
+    // To loosen this, we'd need topo sort.
+    for item in &program.0 {
+        if let parse::Item::Struct(s) = item {
+            types.populate_struct(s).unwrap();
+        }
+    }
+
+    for item in &program.0 {
         match item {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
@@ -28,6 +42,7 @@ fn main() {
                     .gen_function(func, &mut types, &mut std::io::stdout())
                     .unwrap();
             }
+            _ => (),
         }
     }
 }

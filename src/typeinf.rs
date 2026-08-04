@@ -18,7 +18,7 @@ impl TypeMap {
         let mut map = HashMap::new();
         for arg in &func.args.0 {
             let ty = if let Some(ast_ty) = &arg.ty.as_ref() {
-                types.from_ast(ast_ty)?
+                types.intern_from_ast(ast_ty)?
             } else {
                 // Note: this is a choice; it could be default to allow more inference
                 types.get_handle(&Type::U32)
@@ -101,7 +101,18 @@ impl TypeMap {
                 TokBody::Minus | TokBody::Exclamation => self.try_get_type(expr, types),
                 _ => None,
             },
-            parse::Expr::Cast(_expr, ty) => types.from_ast(ty).ok(),
+            parse::Expr::Cast(_expr, ty) => types.intern_from_ast(ty).ok(),
+            parse::Expr::Field(expr, field) => self.try_get_type(expr, types).and_then(|base| {
+                if let Type::Ptr(target) = types.get(base)
+                    && let Type::Struct(s) = types.get(*target)
+                    && let Some(field_name) = field.as_ident()
+                    && let Some(field) = types.get_field(*s, field_name)
+                {
+                    Some(field.ty)
+                } else {
+                    None
+                }
+            }),
         }
     }
 }

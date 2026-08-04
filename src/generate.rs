@@ -10,7 +10,7 @@ use crate::{
     lex::{Error, TokBody, Token},
     regmap::{Regmap, parse_register},
     stmt::Stmt,
-    types::{Type, TypePool},
+    types::{Type, TypeHandle, TypePool},
 };
 
 pub struct GenCtx<'a, W: Write> {
@@ -58,6 +58,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     },
                 rhs,
             } => self.gen_store(addr, rhs),
+            Assign {
+                with_flags: _,
+                lhs:
+                    Expr {
+                        body: Body::Field(base, field),
+                        ty,
+                    },
+                rhs,
+            } => self.gen_store_field(*ty, base, *field, rhs),
             _ => todo!(),
         }
     }
@@ -75,18 +84,23 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // TODO: more sophistication about immediate size
                 // can be mvn if !n is imm12
                 // falls back to ldr
-                write!(self.w, "    mov{} ", s(with_flags))?;
-                write_reg(lhs, self.w)?;
-                writeln!(self.w, ", #{n}")?;
+                if *n < 0x1_0000 || is_imm8m(*n) {
+                    write!(self.w, "    mov{} ", s(with_flags))?;
+                    write_reg(lhs, self.w)?;
+                    writeln!(self.w, ", #{n}")?;
+                } else if is_imm8m(!n) {
+                    write!(self.w, "    mvn{} ", s(with_flags))?;
+                    write_reg(lhs, self.w)?;
+                    writeln!(self.w, ", #{}", !n)?;
+                } else {
+                    // TODO: fail if with_flags
+                    write!(self.w, "    ldr ")?;
+                    write_reg(lhs, self.w)?;
+                    writeln!(self.w, ", ={n}")?;
+                }
             }
             Body::Unary(UnaryOp::Deref, rhs) => {
-                let insn = match self.types.pointee(rhs.ty) {
-                    Some(Type::U8) => "ldrb",
-                    Some(Type::U16) => "ldrh",
-                    Some(Type::I8) => "ldrsb",
-                    Some(Type::I16) => "ldrsh",
-                    _ => "ldr",
-                };
+                let insn = ldr_for_ty(self.types.pointee(rhs.ty));
                 write!(self.w, "    {insn} ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
@@ -128,6 +142,19 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 self.gen_operand2(b)?;
                 writeln!(self.w)?;
             }
+            Body::Field(base, offset) => {
+                let insn = ldr_for_ty(Some(self.types.get(rhs.ty)));
+                if let Body::Reg(r) = &base.body {
+                    write!(self.w, "    {insn} ")?;
+                    write_reg(lhs, self.w)?;
+                    write!(self.w, ", [")?;
+                    write_reg(*r, self.w)?;
+                    write!(self.w, ", #{offset}]")?;
+                    writeln!(self.w)?;
+                } else {
+                    Err("base must be register")?;
+                }
+            }
             _ => todo!(),
         }
         Ok(())
@@ -135,11 +162,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
 
     fn gen_store(&mut self, addr: &Expr, rhs: &Expr) -> Result<(), Error> {
         if let Body::Reg(r) = &rhs.body {
-            let insn = match self.types.pointee(addr.ty) {
-                Some(Type::U8 | Type::I8) => "strb",
-                Some(Type::U16 | Type::I16) => "strh",
-                _ => "str",
-            };
+            let insn = str_for_ty(self.types.pointee(addr.ty));
             write!(self.w, "    {insn} ")?;
             write_reg(*r, self.w)?;
             write!(self.w, ", ")?;
@@ -147,6 +170,29 @@ impl<'a, W: Write> GenCtx<'a, W> {
             writeln!(self.w)?;
         } else {
             Err("store instructions only take registers")?;
+        }
+        Ok(())
+    }
+
+    fn gen_store_field(
+        &mut self,
+        ty: TypeHandle,
+        base: &Expr,
+        offset: usize,
+        rhs: &Expr,
+    ) -> Result<(), Error> {
+        if let Body::Reg(rn) = &base.body
+            && let Body::Reg(rd) = &rhs.body
+        {
+            let insn = str_for_ty(Some(self.types.get(ty)));
+            write!(self.w, "    {insn} ")?;
+            write_reg(*rd, self.w)?;
+            write!(self.w, ", [")?;
+            write_reg(*rn, self.w)?;
+            write!(self.w, ", #{offset}]")?;
+            writeln!(self.w)?;
+        } else {
+            Err("base and value must both be registers")?;
         }
         Ok(())
     }
@@ -243,6 +289,24 @@ pub fn gen_stmt(stmt: &Stmt, regmap: &Regmap, w: &mut impl Write) -> Result<(), 
             crate::stmt::Insn::BCond(cond, target) => writeln!(w, "    b{cond} {target}")?,
             crate::stmt::Insn::B(target) => writeln!(w, "    b {target}")?,
             crate::stmt::Insn::Bl(target) => writeln!(w, "    bl {target}")?,
+            crate::stmt::Insn::Cbz(reg, target) => {
+                if let Some(id) = reg.as_ident() {
+                    write!(w, "    cbz ")?;
+                    write_var_reg(id, regmap, w)?;
+                    writeln!(w, ", {target}")?;
+                } else {
+                    Err("bx target must be register")?;
+                }
+            }
+            crate::stmt::Insn::Cbnz(reg, target) => {
+                if let Some(id) = reg.as_ident() {
+                    write!(w, "    cbnz ")?;
+                    write_var_reg(id, regmap, w)?;
+                    writeln!(w, ", {target}")?;
+                } else {
+                    Err("bx target must be register")?;
+                }
+            }
         },
         _ => todo!("nyi"),
     }
@@ -338,5 +402,23 @@ fn write_reg(reg: u8, w: &mut impl Write) -> Result<(), Error> {
 impl From<bool> for WithFlags {
     fn from(value: bool) -> Self {
         if value { WithFlags::Yes } else { WithFlags::No }
+    }
+}
+
+fn ldr_for_ty(ty: Option<&Type>) -> &'static str {
+    match ty {
+        Some(Type::U8) => "ldrb",
+        Some(Type::U16) => "ldrh",
+        Some(Type::I8) => "ldrsb",
+        Some(Type::I16) => "ldrsh",
+        _ => "ldr",
+    }
+}
+
+fn str_for_ty(ty: Option<&Type>) -> &'static str {
+    match ty {
+        Some(Type::U8 | Type::I8) => "strb",
+        Some(Type::U16 | Type::I16) => "strh",
+        _ => "str",
     }
 }

@@ -12,6 +12,7 @@ pub struct Program(pub Vec<Item>);
 #[derive(Debug)]
 pub enum Item {
     Function(Function),
+    Struct(Struct),
 }
 
 #[derive(Debug)]
@@ -43,19 +44,30 @@ pub enum Expr {
     Binop(Box<Expr>, Token, Box<Expr>),
     Unary(Token, Box<Expr>),
     Cast(Box<Expr>, Type),
+    Field(Box<Expr>, Token),
+}
+
+#[derive(Debug)]
+pub struct Struct {
+    pub name: Token,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Debug)]
+pub struct Field {
+    pub name: Token,
+    pub ty: Type,
 }
 
 pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
     let mut items = vec![];
-    while let Some(tok) = toks.peek() {
+    while let Some(tok) = toks.next() {
         if tok.tok == TokBody::Newline {
-            toks.next();
             continue;
         }
         if tok.match_str("fn") {
-            let _fn_tok = toks.next().unwrap();
             let name = toks.next().ok_or("expected function name")?;
-            if !matches!(name.tok, TokBody::Idenfifier(_)) {
+            if !name.is_ident() {
                 Err("function name must be identifier")?
             }
             let name = name.clone();
@@ -63,6 +75,9 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
             let body = parse_body(toks)?;
             let f = Function { name, args, body };
             items.push(Item::Function(f));
+        } else if tok.match_str("struct") {
+            let s = parse_struct(toks)?;
+            items.push(Item::Struct(s));
         } else {
             todo!("unexpected token {tok:?}");
         }
@@ -88,7 +103,7 @@ fn parse_args(toks: &mut TokBuf) -> Result<Args, Error> {
 
 fn parse_arg(toks: &mut TokBuf) -> Result<Arg, Error> {
     let tok = toks.next().ok_or("unexpected eof in arg")?;
-    if matches!(tok.tok, TokBody::Idenfifier(_)) {
+    if tok.is_ident() {
         let var = tok.clone();
         let mut ty = None;
         if toks.expect_opt(&TokBody::Colon) {
@@ -166,6 +181,20 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 toks.expect(&TokBody::Newline)?;
                 return Ok(Stmt::Insn(Insn::Bl(label)));
             }
+            "cbz" | "cbnz" => {
+                let reg = parse_expr(toks)?;
+                toks.expect(&TokBody::Comma)?;
+                let dst = toks.next().ok_or("expected label")?;
+                let TokBody::Idenfifier(label) = dst.tok.clone() else {
+                    return Err("branch target must be identifier")?;
+                };
+                toks.expect(&TokBody::Newline)?;
+                return Ok(match ident.as_str() {
+                    "cbz" => Stmt::Insn(Insn::Cbz(reg, label)),
+                    "cbnz" => Stmt::Insn(Insn::Cbnz(reg, label)),
+                    _ => unreachable!(),
+                });
+            }
             _ => (),
         }
         toks.back_one();
@@ -228,23 +257,38 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
 }
 
 fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
+    let tok = toks.peek().ok_or("unexpected eof in expr")?;
+    match tok.tok {
+        TokBody::Asterisk | TokBody::Minus | TokBody::Exclamation => {
+            let first = toks.next().unwrap().clone();
+            let expr = parse_expr_unary(toks)?;
+            Ok(Expr::Unary(first, expr.into()))
+        }
+        _ => parse_trailer_expr(toks),
+    }
+}
+
+fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
     let first = toks.next().ok_or("unexpected eof in expr")?;
-    match first.tok {
+    let mut expr = match first.tok {
         TokBody::OpenParen => {
             let expr = parse_expr(toks)?;
             // TODO: handle comma for tuple formation
             toks.expect(&TokBody::CloseParen)?;
-            Ok(expr)
+            expr
         }
-        TokBody::Idenfifier(_) => Ok(Expr::Ident(first.clone())),
-        TokBody::Number(_) => Ok(Expr::Literal(first.clone())),
-        TokBody::Asterisk | TokBody::Minus | TokBody::Exclamation => {
-            let first = first.clone();
-            let expr = parse_expr(toks)?;
-            Ok(Expr::Unary(first, expr.into()))
-        }
+        TokBody::Idenfifier(_) => Expr::Ident(first.clone()),
+        TokBody::Number(_) => Expr::Literal(first.clone()),
         _ => Err("unknown token for expr")?,
+    };
+    while toks.expect_opt(&TokBody::Period) {
+        let field = toks.next().ok_or("expected field name")?;
+        if !field.is_ident() {
+            Err("field must be identifier")?
+        }
+        expr = Expr::Field(expr.into(), field.clone());
     }
+    Ok(expr)
 }
 
 fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
@@ -270,6 +314,35 @@ fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
         return Ok(Stmt::WithFlagsExpr(lhs));
     }
     todo!()
+}
+
+// Note: "struct" keyword has already been consumed
+fn parse_struct(toks: &mut TokBuf) -> Result<Struct, Error> {
+    let name = toks.next().ok_or("expected struct name")?.clone();
+    if !name.is_ident() {
+        Err("struct name must be identifier")?
+    }
+    toks.expect(&TokBody::OpenBrace)?;
+    toks.expect(&TokBody::Newline)?;
+    let mut fields = vec![];
+    loop {
+        toks.eat_newlines();
+        if toks.expect_opt(&TokBody::CloseBrace) {
+            break;
+        }
+        let field_name = toks.next().ok_or("unexpected eof in struct")?.clone();
+        if !field_name.is_ident() {
+            Err("expected field name to be identifier")?;
+        }
+        toks.expect(&TokBody::Colon)?;
+        let ty = parse_type(toks)?;
+        fields.push(Field {
+            name: field_name,
+            ty,
+        });
+        toks.expect(&TokBody::Newline)?;
+    }
+    Ok(Struct { name, fields })
 }
 
 impl Expr {

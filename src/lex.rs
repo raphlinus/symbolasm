@@ -1,7 +1,5 @@
 //! Tokenizer
 
-use crate::lex::TokBody::Idenfifier;
-
 /// Location in source file. Will expand to identify multiple files.
 #[derive(Clone, Debug)]
 pub struct Loc {
@@ -20,6 +18,7 @@ pub enum TokBody {
     Idenfifier(String),
     Number(i64),
     Comma,
+    Period,
     OpenParen,
     CloseParen,
     OpenBracket,
@@ -67,6 +66,14 @@ impl Token {
             None
         }
     }
+
+    pub fn match_str(&self, other: &str) -> bool {
+        self.tok.match_str(other)
+    }
+
+    pub fn is_ident(&self) -> bool {
+        matches!(self.tok, TokBody::Idenfifier(_))
+    }
 }
 
 pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
@@ -86,6 +93,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             '[' => tokens.push(Token::new(loc, TokBody::OpenBracket)),
             ']' => tokens.push(Token::new(loc, TokBody::CloseBracket)),
             ',' => tokens.push(Token::new(loc, TokBody::Comma)),
+            '.' => tokens.push(Token::new(loc, TokBody::Period)),
             '=' => tokens.push(Token::new(loc, TokBody::Equals)),
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
             '+' => {
@@ -191,12 +199,6 @@ impl TokBody {
             self,
             TokBody::Equals | TokBody::PlusEquals | TokBody::MinusEquals | TokBody::AsteriskEquals
         )
-    }
-}
-
-impl Token {
-    pub fn match_str(&self, other: &str) -> bool {
-        self.tok.match_str(other)
     }
 }
 
