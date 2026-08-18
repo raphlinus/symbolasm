@@ -160,7 +160,17 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 let mut val = (c as u8 - b'0') as i64;
                 let mut end = ix + 1;
                 if val == 0 && end < src.len() && src.as_bytes()[end] == b'x' {
-                    todo!("hex literal");
+                    end += 1;
+                    while end < src.len() {
+                        let c1 = src.as_bytes()[end];
+                        if let Some(digit) = (c1 as char).to_digit(16) {
+                            val = val * 16 + digit as i64;
+                        } else if c1 != b'_' {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    // TODO: error if end == ix + 2; bare "0x"
                 }
                 while end < src.len() {
                     let c1 = src.as_bytes()[end];

@@ -1,0 +1,42 @@
+fn start() {
+    mask @r0 = 0x240
+    bl clear_reset
+    pads_bank0 @r0 = 0x40038000
+    pads_bank0 += 4
+    led_pin @r1 = 29
+    config @r2 = 0x56
+    *(pads_bank0 + (led_pin << 2)) = config
+    io_bank0_base @r0 = 0x40028000
+    io_bank0_base += 4
+    function @r2 = 5
+    *(io_bank0_base + (led_pin << 3)) = function
+    sio_base @r0 = 0xd0000000
+    mask @r2 = 2
+    mask = mask << led_pin
+    *(sio_base + 0x38) = mask
+blink_loop:
+    *(sio_base + 0x28) = mask
+    count @r1 = 300_000
+delay:
+    #(count -= 1)
+    bne delay
+    b blink_loop
+}
+
+fn assert_reset(mask: u32) {
+    resets @r1 = 0x40020000
+    atomic_set @r2 = 0x2000
+    *(resets + atomic_set) = mask
+    bx lr
+}
+
+fn clear_reset(mask: u32) {
+    resets @r1 = 0x40020000
+    atomic_clear @r2 = 0x3000
+    *(resets + atomic_clear) = mask
+loop:
+    status @r2 = *(resets + 0x8)
+    #(_ @r2 = mask & !status)
+    bne loop
+    bx lr
+}

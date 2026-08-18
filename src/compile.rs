@@ -76,9 +76,11 @@ impl FnScope {
             let (kind, label) = analyze_branch(stmt);
             fallthrough = !matches!(kind, BranchKind::UncondBranch);
             if let Some(label) = label {
-                // TODO: deal with label not existing, also note it could be global
-                let target = self.basic_block_starts[&self.labels[label]];
-                self.add_edge(this_block, target);
+                if let Some(target_ix) = self.labels.get(label) {
+                    let target_block = self.basic_block_starts[target_ix];
+                    self.add_edge(this_block, target_block);
+                }
+                // TODO: probably want to make sure label is a proper global
             }
         }
 

@@ -3,7 +3,7 @@
 //! This approach is clunky, and is going to run into problems when types are
 //! needed.
 
-use std::io::Write;
+use std::{io::Write, ops::Deref};
 
 use crate::{
     ir::{Assign, BinOp, Body, Expr, Ir, UnaryOp},
@@ -127,7 +127,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
             }
             Body::Binop(a, op, b) => {
                 let ty = self.types.get(a.ty);
-                write!(self.w, "    {}{} ", insn_for_binop(*op, ty), s(with_flags))?;
+                let mut insn = insn_for_binop(*op, ty);
+                let mut rhs = b.deref();
+                if let Body::Unary(UnaryOp::Not, b) = &rhs.body {
+                    insn = match op {
+                        BinOp::And => "bic",
+                        BinOp::Orr => "orn",
+                        _ => Err("unary not in rhs only works with and/or")?,
+                    };
+                    rhs = b.deref();
+                }
+                write!(self.w, "    {insn}{} ", s(with_flags))?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
                 if let Body::Reg(r) = &a.body {
@@ -139,7 +149,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 write!(self.w, ", ")?;
                 // TODO: shifts aren't operand2; add and sub allow imm12
                 // also match orn and bic
-                self.gen_operand2(b)?;
+                self.gen_operand2(rhs)?;
                 writeln!(self.w)?;
             }
             Body::Field(base, offset) => {
@@ -264,7 +274,42 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 write_reg(*r, self.w)?;
                 write!(self.w, "]")?;
             }
-            _ => todo!(),
+            Body::Binop(lhs, BinOp::Add, rhs) => {
+                let Body::Reg(lhs_reg) = &lhs.body else {
+                    return Err("left addend must be register")?;
+                };
+                match &rhs.body {
+                    Body::Reg(rhs_reg) => {
+                        write!(self.w, "[")?;
+                        write_reg(*lhs_reg, self.w)?;
+                        write!(self.w, ", ")?;
+                        write_reg(*rhs_reg, self.w)?;
+                        write!(self.w, "]")?;
+                    }
+                    Body::Imm(n) => {
+                        // TODO: validation of immediate
+                        write!(self.w, "[")?;
+                        write_reg(*lhs_reg, self.w)?;
+                        write!(self.w, ", #{n}]")?;
+                    }
+                    Body::Binop(offset, BinOp::Shl, shift) => {
+                        if let Body::Reg(offset_reg) = &offset.body
+                            && let Body::Imm(shift) = &shift.body
+                        {
+                            // TODO: validate (somewhere) that shift is 0..=3
+                            write!(self.w, "[")?;
+                            write_reg(*lhs_reg, self.w)?;
+                            write!(self.w, ", ")?;
+                            write_reg(*offset_reg, self.w)?;
+                            write!(self.w, ", lsl #{shift}]")?;
+                        } else {
+                            Err("must be register left shifted by immediate")?;
+                        }
+                    }
+                    _ => todo!(),
+                }
+            }
+            _ => Err("unsupported address expression")?,
         }
         Ok(())
     }
