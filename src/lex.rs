@@ -19,6 +19,7 @@ pub enum TokBody {
     Number(i64),
     Comma,
     Period,
+    DotDot,
     OpenParen,
     CloseParen,
     OpenBracket,
@@ -93,7 +94,14 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             '[' => tokens.push(Token::new(loc, TokBody::OpenBracket)),
             ']' => tokens.push(Token::new(loc, TokBody::CloseBracket)),
             ',' => tokens.push(Token::new(loc, TokBody::Comma)),
-            '.' => tokens.push(Token::new(loc, TokBody::Period)),
+            '.' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'.') {
+                    tokens.push(Token::new(loc, TokBody::DotDot));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Period));
+                }
+            }
             '=' => tokens.push(Token::new(loc, TokBody::Equals)),
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
             '+' => {

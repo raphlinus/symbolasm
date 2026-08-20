@@ -113,6 +113,7 @@ impl TypeMap {
                     None
                 }
             }),
+            parse::Expr::Slice(expr, _, _) => self.try_get_type(expr, types),
         }
     }
 }

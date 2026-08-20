@@ -45,6 +45,7 @@ pub enum Expr {
     Unary(Token, Box<Expr>),
     Cast(Box<Expr>, Type),
     Field(Box<Expr>, Token),
+    Slice(Box<Expr>, usize, usize),
 }
 
 #[derive(Debug)]
@@ -281,12 +282,32 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
         TokBody::Number(_) => Expr::Literal(first.clone()),
         _ => Err("unknown token for expr")?,
     };
-    while toks.expect_opt(&TokBody::Period) {
-        let field = toks.next().ok_or("expected field name")?;
-        if !field.is_ident() {
-            Err("field must be identifier")?
+    while let Some(first) = toks.peek() {
+        match &first.tok {
+            TokBody::Period => {
+                toks.next().unwrap();
+                let field = toks.next().ok_or("expected field name")?;
+                if !field.is_ident() {
+                    Err("field must be identifier")?
+                }
+                expr = Expr::Field(expr.into(), field.clone());
+            }
+            TokBody::OpenBracket => {
+                toks.next().unwrap();
+                let start = toks.next().ok_or("unexpected eof in slice")?;
+                let &TokBody::Number(start) = &start.tok else {
+                    return Err("slice start must be number")?;
+                };
+                toks.expect(&TokBody::DotDot)?;
+                let end = toks.next().ok_or("unexpected eof in slice")?;
+                let &TokBody::Number(end) = &end.tok else {
+                    return Err("slice end must be number")?;
+                };
+                toks.expect(&TokBody::CloseBracket)?;
+                expr = Expr::Slice(expr.into(), start as usize, end as usize);
+            }
+            _ => break,
         }
-        expr = Expr::Field(expr.into(), field.clone());
     }
     Ok(expr)
 }

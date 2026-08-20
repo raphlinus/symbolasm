@@ -40,6 +40,7 @@ pub enum Body {
     // a legit question is whether this should be a separate expr
     // or whether it should be *(base + offset)
     Field(Box<Expr>, usize),
+    Slice(Box<Expr>, usize, usize),
 }
 
 struct Place {
@@ -273,6 +274,12 @@ impl<'a> IrCtx<'a> {
                     .ok_or("field not found")?;
                 let ty = field.ty;
                 let body = Body::Field(expr.into(), field.offset);
+                Ok(Expr { ty, body })
+            }
+            parse::Expr::Slice(expr, start, end) => {
+                let expr = self.lower_expr(expr, None)?;
+                let ty = expr.ty;
+                let body = Body::Slice(expr.into(), *start, *end);
                 Ok(Expr { ty, body })
             }
         }

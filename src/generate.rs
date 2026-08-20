@@ -67,6 +67,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     },
                 rhs,
             } => self.gen_store_field(*ty, base, *field, rhs),
+            Assign {
+                with_flags: _,
+                lhs:
+                    Expr {
+                        body: Body::Slice(a, start, end),
+                        ..
+                    },
+                rhs,
+            } => self.gen_assign_slice(a, *start, *end, rhs),
             _ => todo!(),
         }
     }
@@ -165,7 +174,56 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     Err("base must be register")?;
                 }
             }
+            Body::Slice(a, start, end) => {
+                // TODO: handle 0..8 and 0..16 (shorter encodings)
+                let insn = if self.types.get(a.ty).is_signed() {
+                    "sbfx"
+                } else {
+                    "ubfx"
+                };
+                // TODO: ensure end > start, otherwise error
+                let width = end - start;
+                if let Body::Reg(r) = &a.body {
+                    write!(self.w, "    {insn} ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #{start}, #{width}")?;
+                }
+            }
             _ => todo!(),
+        }
+        Ok(())
+    }
+
+    fn gen_assign_slice(
+        &mut self,
+        a: &Expr,
+        start: usize,
+        end: usize,
+        rhs: &Expr,
+    ) -> Result<(), Error> {
+        if let Body::Reg(r) = &a.body {
+            // TODO: ensure end > start, otherwise error
+            let width = end - start;
+            match &rhs.body {
+                Body::Imm(n) => {
+                    if *n != 0 {
+                        Err("can only clear slices, not other immediates")?;
+                    }
+                    write!(self.w, "    bfc ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #{start}, #{width}")?;
+                }
+                Body::Reg(rhs) => {
+                    write!(self.w, "    bfi ")?;
+                    write_reg(*r, self.w)?;
+                    write!(self.w, ", ")?;
+                    write_reg(*rhs, self.w)?;
+                    writeln!(self.w, ", #{start}, #{width}")?;
+                }
+                _ => todo!(),
+            }
+        } else {
+            Err("slice assignment must be to register")?;
         }
         Ok(())
     }
