@@ -7,7 +7,8 @@ use crate::{
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
-    typeinf::TypeMap,
+    svd::Peripherals,
+    typeinf::{TypeInferCtx, TypeMap},
     types::TypePool,
 };
 
@@ -140,6 +141,7 @@ impl FnScope {
         &self,
         func: &Function,
         types: &mut TypePool,
+        peripherals: Option<&Peripherals>,
         w: &mut impl Write,
     ) -> Result<(), Error> {
         if let Some(name) = func.name.as_ident() {
@@ -150,7 +152,8 @@ impl FnScope {
             writeln!(w, "{name}:")?;
             // might also consider .function / .endfunc; but this
         }
-        let typemap = TypeMap::infer(func, types)?;
+        let type_inf_ctx = TypeInferCtx::new(types, peripherals);
+        let typemap = type_inf_ctx.infer(func)?;
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
                 let mut regmap = self.basic_blocks[*pred].regmap.clone();
@@ -164,7 +167,7 @@ impl FnScope {
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
                 if IrCtx::can_lower(stmt) {
-                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap);
+                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, peripherals);
                     let ir = ir_ctx.lower(stmt)?;
                     let mut gen_ctx = GenCtx::new(types, w);
                     gen_ctx.gen_from_ir(&ir)?;

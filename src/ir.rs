@@ -1,6 +1,7 @@
 use crate::lex::Token;
 use crate::parse;
 use crate::regmap::parse_register;
+use crate::svd::Peripherals;
 use crate::typeinf::TypeMap;
 use crate::{
     lex::{Error, TokBody},
@@ -73,6 +74,8 @@ pub struct IrCtx<'a> {
     regmap: &'a Regmap,
     types: &'a mut TypePool,
     typemap: &'a TypeMap,
+    // This is peripherals for now, but will grow to data in global scope.
+    peripherals: Option<&'a Peripherals>,
 }
 
 impl BinOp {
@@ -136,11 +139,17 @@ impl Place {
 }
 
 impl<'a> IrCtx<'a> {
-    pub fn new(regmap: &'a Regmap, types: &'a mut TypePool, typemap: &'a TypeMap) -> Self {
+    pub fn new(
+        regmap: &'a Regmap,
+        types: &'a mut TypePool,
+        typemap: &'a TypeMap,
+        peripherals: Option<&'a Peripherals>,
+    ) -> Self {
         Self {
             regmap,
             types,
             typemap,
+            peripherals,
         }
     }
 
@@ -260,6 +269,9 @@ impl<'a> IrCtx<'a> {
                 Ok(expr)
             }
             parse::Expr::Field(expr, field) => {
+                if expr.as_ident() == Some("peripherals") {
+                    return self.lower_peripheral(field);
+                }
                 let expr = self.lower_expr(expr, None)?;
                 // TODO: support s.a.b, in which case the type is a struct
                 let Type::Ptr(struct_ty) = self.types.get(expr.ty) else {
@@ -282,6 +294,22 @@ impl<'a> IrCtx<'a> {
                 let body = Body::Slice(expr.into(), *start, *end);
                 Ok(Expr { ty, body })
             }
+        }
+    }
+
+    fn lower_peripheral(&mut self, field: &Token) -> Result<Expr, Error> {
+        if let Some(name) = field.as_ident()
+            && let Some(p) = self.peripherals
+        {
+            if let Some(periph) = p.periphs.get(name) {
+                let ty = periph.ty;
+                let body = Body::Imm(periph.base_address);
+                Ok(Expr { ty, body })
+            } else {
+                Err(format!("peripheral {name} not found"))?
+            }
+        } else {
+            Err("peripherals not set up properly")?
         }
     }
 

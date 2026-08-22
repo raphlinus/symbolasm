@@ -151,6 +151,19 @@ impl TypePool {
         Ok(())
     }
 
+    pub fn build_struct(
+        &mut self,
+        fields: Vec<StructField>,
+        size: usize,
+        align: usize,
+    ) -> TypeHandle {
+        let ix = self.structs.len();
+        let handle = self.get_handle(&Type::Struct(StructHandle(ix)));
+        self.structs.push(StructLayout(fields));
+        self.info[handle.0] = TypeInfo::new(size, align);
+        handle
+    }
+
     fn get_info(&self, ty: &Type) -> TypeInfo {
         match ty {
             Type::Default => TypeInfo::new(4, 4),

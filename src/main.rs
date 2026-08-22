@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use clap::Parser;
+
 use crate::{compile::FnScope, lex::tokenize, parse::parse_program, types::TypePool};
 
 mod bitset;
@@ -11,15 +13,29 @@ mod parse;
 mod precedence;
 mod regmap;
 mod stmt;
+mod svd;
 mod typeinf;
 mod types;
 
+#[derive(Parser)]
+struct Args {
+    path: String,
+
+    #[arg(short, long)]
+    svd: Option<String>,
+}
+
 fn main() {
-    let path = std::env::args().nth(1).expect("need filename");
-    let src = std::fs::read_to_string(path).expect("error reading file");
+    let args = Args::parse();
+    let src = std::fs::read_to_string(&args.path).expect("error reading file");
     let mut tokens = tokenize(&src).expect("error tokenizing file");
     let program = parse_program(&mut tokens).expect("parse error");
     let mut types = TypePool::new();
+    let mut peripherals = None;
+
+    if let Some(svd) = &args.svd {
+        peripherals = Some(svd::parse_svd(svd, &mut types).unwrap());
+    }
     //println!("{program:#?}");
     for item in &program.0 {
         if let parse::Item::Struct(s) = item {
@@ -45,7 +61,9 @@ fn main() {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
                 scope.analyze(func).unwrap();
-                scope.gen_function(func, &mut types, w).unwrap();
+                scope
+                    .gen_function(func, &mut types, peripherals.as_ref(), w)
+                    .unwrap();
             }
             _ => (),
         }
