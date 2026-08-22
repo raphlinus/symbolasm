@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{compile::FnScope, lex::tokenize, parse::parse_program, types::TypePool};
 
 mod bitset;
@@ -18,7 +20,7 @@ fn main() {
     let mut tokens = tokenize(&src).expect("error tokenizing file");
     let program = parse_program(&mut tokens).expect("parse error");
     let mut types = TypePool::new();
-    println!("{program:#?}");
+    //println!("{program:#?}");
     for item in &program.0 {
         if let parse::Item::Struct(s) = item {
             types.register_struct(s).unwrap();
@@ -33,14 +35,17 @@ fn main() {
         }
     }
 
+    let w = &mut std::io::stdout();
+    writeln!(w, ".cpu cortex-m33").unwrap();
+    writeln!(w, ".syntax unified").unwrap();
+    writeln!(w, ".thumb").unwrap();
+
     for item in &program.0 {
         match item {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
                 scope.analyze(func).unwrap();
-                scope
-                    .gen_function(func, &mut types, &mut std::io::stdout())
-                    .unwrap();
+                scope.gen_function(func, &mut types, w).unwrap();
             }
             _ => (),
         }

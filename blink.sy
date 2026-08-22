@@ -11,7 +11,7 @@ fn start() {
     function @r2 = 5
     *(io_bank0_base + (led_pin << 3)) = function
     sio_base @r0 = 0xd0000000
-    mask @r2 = 2
+    mask @r2 = 1
     mask = mask << led_pin
     *(sio_base + 0x38) = mask
 blink_loop:

@@ -38,7 +38,7 @@ impl FnScope {
                 }
             }
         }
-        println!("{:?}", self.labels);
+        //println!("{:?}", self.labels);
 
         // Find all the basic blocks
         // Basic block 0 is function start
@@ -142,6 +142,14 @@ impl FnScope {
         types: &mut TypePool,
         w: &mut impl Write,
     ) -> Result<(), Error> {
+        if let Some(name) = func.name.as_ident() {
+            // section should be controllable
+            writeln!(w, ".section .text")?;
+            writeln!(w, ".global {name}")?;
+            writeln!(w, ".thumb_func")?;
+            writeln!(w, "{name}:")?;
+            // might also consider .function / .endfunc; but this
+        }
         let typemap = TypeMap::infer(func, types)?;
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {

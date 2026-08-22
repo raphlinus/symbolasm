@@ -34,13 +34,13 @@ loop:
 fn list_len(list: *List) {
     len @r1 = 0
     cbz list, done
-loop:
+loop2:
     val @r2 = list.val
     val += 1
     list.val = val
     list = list.next
     len += 1
-    cbnz list, loop
+    cbnz list, loop2
 done:
     r0 = len
     bx lr
