@@ -205,16 +205,16 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 // TODO: validate that lhs is assignable
                 let op = toks.next().unwrap().clone();
                 let rhs = parse_expr(toks)?;
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::Assign(lhs, op.clone(), rhs));
+                let stmt = Stmt::Assign(lhs, op.clone(), rhs);
+                return addr_update_helper(toks, stmt);
             } else if op.tok == TokBody::At {
                 _ = toks.next();
                 let reg = toks.next().ok_or("expected reg")?.clone();
                 // TODO: ensure reg is valid register
                 toks.expect(&TokBody::Equals)?;
                 let rhs = parse_expr(toks)?;
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::AssignPlace(lhs, reg, rhs));
+                let stmt = Stmt::AssignPlace(lhs, reg, rhs);
+                return addr_update_helper(toks, stmt);
             }
         }
     } else if first.tok == TokBody::Asterisk {
@@ -223,11 +223,32 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
         let op = toks.next().ok_or("eof in assignment")?.clone();
         // TODO: maybe validate
         let rhs = parse_expr(toks)?;
-        return Ok(Stmt::Assign(lhs, op, rhs));
+        let stmt = Stmt::Assign(lhs, op, rhs);
+        return addr_update_helper(toks, stmt);
     } else if first.tok == TokBody::Octothorpe {
         return parse_withflags(toks);
     }
     todo!()
+}
+
+fn addr_update_helper(toks: &mut TokBuf, stmt: Stmt) -> Result<Stmt, Error> {
+    let tok = toks.next().ok_or("missing newline on stmt")?;
+    match &tok.tok {
+        TokBody::Newline => Ok(stmt),
+        TokBody::Semicolon => {
+            let lhs = parse_expr(toks)?;
+            let assign_op = toks.next().ok_or("eof in addr update")?;
+            let sign = match assign_op.tok {
+                TokBody::PlusEquals => 1,
+                TokBody::MinusEquals => -1,
+                _ => Err("addr update must be += or -=")?,
+            };
+            let rhs = parse_expr(toks)?;
+            toks.expect(&TokBody::Newline)?;
+            Ok(Stmt::WithAddrUpdate(stmt.into(), lhs, sign, rhs))
+        }
+        _ => Err("unexpected token after stmt")?,
+    }
 }
 
 fn parse_expr(toks: &mut TokBuf) -> Result<Expr, Error> {

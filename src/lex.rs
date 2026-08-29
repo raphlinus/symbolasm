@@ -19,6 +19,7 @@ pub enum TokBody {
     Number(i64),
     Comma,
     Period,
+    Semicolon,
     DotDot,
     OpenParen,
     CloseParen,
@@ -102,6 +103,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     tokens.push(Token::new(loc, TokBody::Period));
                 }
             }
+            ';' => tokens.push(Token::new(loc, TokBody::Semicolon)),
             '=' => tokens.push(Token::new(loc, TokBody::Equals)),
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
             '+' => {

@@ -57,25 +57,32 @@ impl<'a> TypeInferCtx<'a> {
     fn infer_pass(&mut self, body: &[Stmt]) -> bool {
         let mut changed = false;
         for stmt in body {
-            match stmt {
-                Stmt::Assign(lhs, op, rhs) => {
-                    if op.tok == TokBody::Equals {
-                        changed |= self.infer_assign(lhs, rhs);
-                    }
-                }
-                Stmt::AssignPlace(lhs, _place, rhs) => changed |= self.infer_assign(lhs, rhs),
-                Stmt::WithFlagsAssign(lhs, op, rhs) => {
-                    if op.tok == TokBody::Equals {
-                        changed |= self.infer_assign(lhs, rhs);
-                    }
-                }
-                Stmt::WithFlagsAssignPlace(lhs, _place, rhs) => {
-                    changed |= self.infer_assign(lhs, rhs)
-                }
-                _ => (),
-            }
+            changed |= self.infer_stmt(stmt);
         }
         changed
+    }
+
+    fn infer_stmt(&mut self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Assign(lhs, op, rhs) => {
+                if op.tok == TokBody::Equals {
+                    self.infer_assign(lhs, rhs)
+                } else {
+                    false
+                }
+            }
+            Stmt::AssignPlace(lhs, _place, rhs) => self.infer_assign(lhs, rhs),
+            Stmt::WithFlagsAssign(lhs, op, rhs) => {
+                if op.tok == TokBody::Equals {
+                    self.infer_assign(lhs, rhs)
+                } else {
+                    false
+                }
+            }
+            Stmt::WithFlagsAssignPlace(lhs, _place, rhs) => self.infer_assign(lhs, rhs),
+            Stmt::WithAddrUpdate(stmt, _, _, _) => self.infer_stmt(stmt),
+            _ => false,
+        }
     }
 
     fn infer_assign(&mut self, lhs: &parse::Expr, rhs: &parse::Expr) -> bool {

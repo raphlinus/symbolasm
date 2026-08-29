@@ -6,6 +6,8 @@ struct List {
 fn main(arg0: *i8, arg1: *List) {
     x @r1 = *arg0
     *(arg0 as *i16) = x
+    *arg0 = x; arg0 += 8
+    x = *arg0; arg0 -= 8
     z @r3 = x >> 1
     z += x
     #(z - 4)

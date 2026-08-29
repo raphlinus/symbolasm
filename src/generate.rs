@@ -35,6 +35,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
         match ir {
             Ir::Assign(assign) => self.gen_assign(assign),
             Ir::WithFlags(expr) => self.gen_withflags(expr),
+            Ir::WithAddrUpdate(ir, inc) => self.gen_addr_update(ir, *inc),
         }
     }
 
@@ -57,7 +58,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ..
                     },
                 rhs,
-            } => self.gen_store(addr, rhs),
+            } => self.gen_store(addr, rhs, 0),
             Assign {
                 with_flags: _,
                 lhs:
@@ -113,7 +114,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 write!(self.w, "    {insn} ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
-                self.gen_addr(rhs)?;
+                self.gen_addr(rhs, 0)?;
                 writeln!(self.w)?;
             }
             Body::Unary(UnaryOp::Neg, rhs) => {
@@ -228,13 +229,13 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
-    fn gen_store(&mut self, addr: &Expr, rhs: &Expr) -> Result<(), Error> {
+    fn gen_store(&mut self, addr: &Expr, rhs: &Expr, incr: i32) -> Result<(), Error> {
         if let Body::Reg(r) = &rhs.body {
             let insn = str_for_ty(self.types.pointee(addr.ty));
             write!(self.w, "    {insn} ")?;
             write_reg(*r, self.w)?;
             write!(self.w, ", ")?;
-            self.gen_addr(addr)?;
+            self.gen_addr(addr, incr)?;
             writeln!(self.w)?;
         } else {
             Err("store instructions only take registers")?;
@@ -285,6 +286,29 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
+    fn gen_addr_update(&mut self, ir: &Ir, incr: i32) -> Result<(), Error> {
+        let Ir::Assign(Assign { lhs, rhs, .. }) = ir else {
+            return Err("statement with addr update must be assignment")?;
+        };
+        if let Body::Unary(UnaryOp::Deref, addr) = &lhs.body {
+            self.gen_store(addr, rhs, incr)
+        } else if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
+            if let Body::Reg(r) = &lhs.body {
+                let insn = ldr_for_ty(self.types.pointee(addr.ty));
+                write!(self.w, "    {insn} ")?;
+                write_reg(*r, self.w)?;
+                write!(self.w, ", ")?;
+                self.gen_addr(addr, incr)?;
+                writeln!(self.w)?;
+                Ok(())
+            } else {
+                Err("load must assign to register")?
+            }
+        } else {
+            Err("addr update must be either load or store")?
+        }
+    }
+
     fn gen_operand2(&mut self, expr: &Expr) -> Result<(), Error> {
         match &expr.body {
             Body::Reg(r) => write_reg(*r, self.w)?,
@@ -325,14 +349,18 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
-    fn gen_addr(&mut self, addr: &Expr) -> Result<(), Error> {
+    fn gen_addr(&mut self, addr: &Expr, incr: i32) -> Result<(), Error> {
         match &addr.body {
             Body::Reg(r) => {
                 write!(self.w, "[")?;
                 write_reg(*r, self.w)?;
                 write!(self.w, "]")?;
+                if incr != 0 {
+                    write!(self.w, ", #{incr}")?;
+                }
             }
             Body::Binop(lhs, BinOp::Add, rhs) => {
+                // TODO: incr must be 0
                 let Body::Reg(lhs_reg) = &lhs.body else {
                     return Err("left addend must be register")?;
                 };

@@ -10,6 +10,7 @@ pub enum Stmt {
     WithFlagsExpr(Expr),
     WithFlagsAssign(Expr, Token, Expr),
     WithFlagsAssignPlace(Expr, Token, Expr),
+    WithAddrUpdate(Box<Stmt>, Expr, i32, Expr),
     Insn(Insn),
 }
 

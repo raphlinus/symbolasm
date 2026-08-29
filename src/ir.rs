@@ -17,6 +17,7 @@ use crate::{
 pub enum Ir {
     Assign(Assign),
     WithFlags(Expr),
+    WithAddrUpdate(Box<Ir>, i32),
 }
 
 #[derive(Debug)]
@@ -161,6 +162,7 @@ impl<'a> IrCtx<'a> {
                 | Stmt::WithFlagsAssign(_, _, _)
                 | Stmt::WithFlagsAssignPlace(_, _, _)
                 | Stmt::WithFlagsExpr(_)
+                | Stmt::WithAddrUpdate(_, _, _, _)
         )
     }
 
@@ -179,6 +181,9 @@ impl<'a> IrCtx<'a> {
             Stmt::WithFlagsAssignPlace(lhs, place, rhs) => {
                 let place = Place::from_ast(lhs, place)?;
                 self.lower_assign(lhs, Some(&place), &TokBody::Equals, rhs, true)
+            }
+            Stmt::WithAddrUpdate(stmt, lhs, sign, incr) => {
+                self.lower_addr_update(stmt, lhs, *sign, incr)
             }
             _ => todo!("either we shouldn't try to lower, or we need to impl"),
         }
@@ -311,6 +316,23 @@ impl<'a> IrCtx<'a> {
         } else {
             Err("peripherals not set up properly")?
         }
+    }
+
+    fn lower_addr_update(
+        &mut self,
+        stmt: &Stmt,
+        lhs: &parse::Expr,
+        sign: i32,
+        incr: &parse::Expr,
+    ) -> Result<Ir, Error> {
+        let ir = self.lower(stmt)?;
+        let _lhs = self.lower_expr(lhs, None)?;
+        // TODO: check that _lhs matches addr in the stmt
+        let rhs = self.lower_expr(incr, None)?;
+        let Body::Imm(incr) = &rhs.body else {
+            return Err("addr increment must be integer")?;
+        };
+        Ok(Ir::WithAddrUpdate(ir.into(), *incr as i32 * sign))
     }
 
     fn type_of_ident(&mut self, id: &str) -> Option<TypeHandle> {
