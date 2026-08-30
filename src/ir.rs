@@ -122,7 +122,7 @@ impl Place {
             .as_ident()
             .ok_or("placed expr must be ident")?
             .to_owned();
-        if let TokBody::Idenfifier(place) = &place.tok {
+        if let TokBody::Identifier(place) = &place.tok {
             let place = parse_register(place).expect("place must be register");
             Ok(Self { var, place })
         } else {

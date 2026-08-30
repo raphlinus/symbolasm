@@ -1,4 +1,4 @@
-use crate::{lex::Token, parse::Expr, regmap::parse_register};
+use crate::{lex::Token, parse::Expr};
 
 #[derive(Debug)]
 pub enum Stmt {
@@ -12,6 +12,9 @@ pub enum Stmt {
     WithFlagsAssignPlace(Expr, Token, Expr),
     WithAddrUpdate(Box<Stmt>, Expr, i32, Expr),
     Insn(Insn),
+    StartIf(Token),
+    Else,
+    EndBlock,
 }
 
 #[derive(Debug)]
@@ -22,23 +25,4 @@ pub enum Insn {
     Bl(String),
     Cbz(Expr, String),
     Cbnz(Expr, String),
-}
-
-pub enum Var {
-    Var(String),
-    Reg(u8),
-}
-
-impl Var {
-    fn parse(expr: &Expr) -> Option<Self> {
-        if let Some(id) = expr.as_ident() {
-            if let Some(r) = parse_register(id) {
-                Some(Var::Reg(r))
-            } else {
-                Some(Var::Var(id.to_owned()))
-            }
-        } else {
-            None
-        }
-    }
 }

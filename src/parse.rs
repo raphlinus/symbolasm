@@ -119,7 +119,7 @@ fn parse_arg(toks: &mut TokBuf) -> Result<Arg, Error> {
 fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
     let first = toks.next().ok_or("expected type")?;
     match &first.tok {
-        TokBody::Idenfifier(_) => Ok(Type::Ident(first.clone())),
+        TokBody::Identifier(_) => Ok(Type::Ident(first.clone())),
         TokBody::Asterisk => {
             let expr = parse_type(toks)?;
             Ok(Type::Ptr(expr.into()))
@@ -132,103 +132,136 @@ fn parse_body(toks: &mut TokBuf) -> Result<Vec<Stmt>, Error> {
     let mut stmts = vec![];
     toks.expect(&TokBody::OpenBrace)?;
     toks.expect(&TokBody::Newline)?;
+    let mut depth = 0;
     loop {
         toks.eat_newlines();
-        if toks.expect_opt(&TokBody::CloseBrace) {
+        if depth == 0 && toks.expect_opt(&TokBody::CloseBrace) {
             break;
         }
-        stmts.push(parse_stmt(toks)?);
+        stmts.push(parse_stmt(toks, &mut depth)?);
     }
     Ok(stmts)
 }
 
-fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
+fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
     let first = toks.next().ok_or("unexpected eof in stmt")?.clone();
-    if let TokBody::Idenfifier(ident) = first.tok {
-        if toks.expect_opt(&TokBody::Colon) {
-            toks.expect(&TokBody::Newline)?;
-            return Ok(Stmt::Label(ident));
+    match first.tok {
+        TokBody::Identifier(ident) => {
+            if toks.expect_opt(&TokBody::Colon) {
+                toks.expect(&TokBody::Newline)?;
+                return Ok(Stmt::Label(ident));
+            }
+            // TODO: a bit more backtracking, among other things this precludes "b" as variable name
+            match ident.as_str() {
+                "bx" => {
+                    let dst = parse_expr(toks)?;
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(Stmt::Insn(Insn::Bx(dst)));
+                }
+                "bcc" | "bcs" | "beq" | "bge" | "bgt" | "bhi" | "bhs" | "ble" | "blo" | "bls"
+                | "blt" | "bmi" | "bne" | "bpl" | "bvc" | "bvs" => {
+                    let dst = toks.next().ok_or("expected label")?;
+                    let TokBody::Identifier(label) = dst.tok.clone() else {
+                        return Err("branch target must be identifier")?;
+                    };
+                    let cond = ident[1..].to_string();
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(Stmt::Insn(Insn::BCond(cond, label)));
+                }
+                "b" => {
+                    let dst = toks.next().ok_or("expected label")?;
+                    let TokBody::Identifier(label) = dst.tok.clone() else {
+                        return Err("branch target must be identifier")?;
+                    };
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(Stmt::Insn(Insn::B(label)));
+                }
+                "bl" => {
+                    let dst = toks.next().ok_or("expected label")?;
+                    let TokBody::Identifier(label) = dst.tok.clone() else {
+                        return Err("branch target must be identifier")?;
+                    };
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(Stmt::Insn(Insn::Bl(label)));
+                }
+                "cbz" | "cbnz" => {
+                    let reg = parse_expr(toks)?;
+                    toks.expect(&TokBody::Comma)?;
+                    let dst = toks.next().ok_or("expected label")?;
+                    let TokBody::Identifier(label) = dst.tok.clone() else {
+                        return Err("branch target must be identifier")?;
+                    };
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(match ident.as_str() {
+                        "cbz" => Stmt::Insn(Insn::Cbz(reg, label)),
+                        "cbnz" => Stmt::Insn(Insn::Cbnz(reg, label)),
+                        _ => unreachable!(),
+                    });
+                }
+                "if" => {
+                    toks.expect(&TokBody::Octothorpe)?;
+                    let cond = toks.next().ok_or("unexpected eof in if stmt")?.clone();
+                    toks.expect(&TokBody::OpenBrace)?;
+                    toks.expect(&TokBody::Newline)?;
+                    *depth += 1;
+                    return Ok(Stmt::StartIf(cond));
+                }
+                _ => (),
+            }
+            toks.back_one();
+            let lhs = parse_expr(toks)?;
+            if let Some(op) = toks.peek() {
+                if op.tok.is_assign_op() {
+                    // TODO: validate that lhs is assignable
+                    let op = toks.next().unwrap().clone();
+                    let rhs = parse_expr(toks)?;
+                    let stmt = Stmt::Assign(lhs, op.clone(), rhs);
+                    addr_update_helper(toks, stmt)
+                } else if op.tok == TokBody::At {
+                    _ = toks.next();
+                    let reg = toks.next().ok_or("expected reg")?.clone();
+                    // TODO: ensure reg is valid register
+                    toks.expect(&TokBody::Equals)?;
+                    let rhs = parse_expr(toks)?;
+                    let stmt = Stmt::AssignPlace(lhs, reg, rhs);
+                    addr_update_helper(toks, stmt)
+                } else {
+                    Err("unhandled syntax")?
+                }
+            } else {
+                Err("unexpected eof in stmt")?
+            }
         }
-        // TODO: a bit more backtracking, among other things this precludes "b" as variable name
-        match ident.as_str() {
-            "bx" => {
-                let dst = parse_expr(toks)?;
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::Insn(Insn::Bx(dst)));
-            }
-            "bcc" | "bcs" | "beq" | "bge" | "bgt" | "bhi" | "bhs" | "ble" | "blo" | "bls"
-            | "blt" | "bmi" | "bne" | "bpl" | "bvc" | "bvs" => {
-                let dst = toks.next().ok_or("expected label")?;
-                let TokBody::Idenfifier(label) = dst.tok.clone() else {
-                    return Err("branch target must be identifier")?;
-                };
-                let cond = ident[1..].to_string();
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::Insn(Insn::BCond(cond, label)));
-            }
-            "b" => {
-                let dst = toks.next().ok_or("expected label")?;
-                let TokBody::Idenfifier(label) = dst.tok.clone() else {
-                    return Err("branch target must be identifier")?;
-                };
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::Insn(Insn::B(label)));
-            }
-            "bl" => {
-                let dst = toks.next().ok_or("expected label")?;
-                let TokBody::Idenfifier(label) = dst.tok.clone() else {
-                    return Err("branch target must be identifier")?;
-                };
-                toks.expect(&TokBody::Newline)?;
-                return Ok(Stmt::Insn(Insn::Bl(label)));
-            }
-            "cbz" | "cbnz" => {
-                let reg = parse_expr(toks)?;
-                toks.expect(&TokBody::Comma)?;
-                let dst = toks.next().ok_or("expected label")?;
-                let TokBody::Idenfifier(label) = dst.tok.clone() else {
-                    return Err("branch target must be identifier")?;
-                };
-                toks.expect(&TokBody::Newline)?;
-                return Ok(match ident.as_str() {
-                    "cbz" => Stmt::Insn(Insn::Cbz(reg, label)),
-                    "cbnz" => Stmt::Insn(Insn::Cbnz(reg, label)),
-                    _ => unreachable!(),
-                });
-            }
-            _ => (),
+        TokBody::Asterisk => {
+            toks.back_one();
+            let lhs = parse_expr(toks)?;
+            let op = toks.next().ok_or("eof in assignment")?.clone();
+            // TODO: maybe validate
+            let rhs = parse_expr(toks)?;
+            let stmt = Stmt::Assign(lhs, op, rhs);
+            addr_update_helper(toks, stmt)
         }
-        toks.back_one();
-        let lhs = parse_expr(toks)?;
-        if let Some(op) = toks.peek() {
-            if op.tok.is_assign_op() {
-                // TODO: validate that lhs is assignable
-                let op = toks.next().unwrap().clone();
-                let rhs = parse_expr(toks)?;
-                let stmt = Stmt::Assign(lhs, op.clone(), rhs);
-                return addr_update_helper(toks, stmt);
-            } else if op.tok == TokBody::At {
-                _ = toks.next();
-                let reg = toks.next().ok_or("expected reg")?.clone();
-                // TODO: ensure reg is valid register
-                toks.expect(&TokBody::Equals)?;
-                let rhs = parse_expr(toks)?;
-                let stmt = Stmt::AssignPlace(lhs, reg, rhs);
-                return addr_update_helper(toks, stmt);
+        TokBody::Octothorpe => parse_withflags(toks),
+        TokBody::CloseBrace => {
+            let tok = toks.next().ok_or("unexpected eof after close brace")?;
+            match &tok.tok {
+                TokBody::Newline => {
+                    *depth -= 1;
+                    Ok(Stmt::EndBlock)
+                }
+                TokBody::Identifier(id) => {
+                    if id != "else" {
+                        Err("unexpected identifier after close brace")?
+                    }
+                    toks.expect(&TokBody::OpenBrace)?;
+                    toks.expect(&TokBody::Newline)?;
+                    Ok(Stmt::Else)
+                }
+                _ => Err("unexpected token after close brace")?,
             }
         }
-    } else if first.tok == TokBody::Asterisk {
-        toks.back_one();
-        let lhs = parse_expr(toks)?;
-        let op = toks.next().ok_or("eof in assignment")?.clone();
-        // TODO: maybe validate
-        let rhs = parse_expr(toks)?;
-        let stmt = Stmt::Assign(lhs, op, rhs);
-        return addr_update_helper(toks, stmt);
-    } else if first.tok == TokBody::Octothorpe {
-        return parse_withflags(toks);
+        _ => Err(format!("unhandled token to begin stmt {:?}", first.tok))?,
     }
-    todo!()
 }
 
 fn addr_update_helper(toks: &mut TokBuf, stmt: Stmt) -> Result<Stmt, Error> {
@@ -299,7 +332,7 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
             toks.expect(&TokBody::CloseParen)?;
             expr
         }
-        TokBody::Idenfifier(_) => Expr::Ident(first.clone()),
+        TokBody::Identifier(_) => Expr::Ident(first.clone()),
         TokBody::Number(_) => Expr::Literal(first.clone()),
         _ => Err("unknown token for expr")?,
     };

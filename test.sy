@@ -13,6 +13,11 @@ fn main(arg0: *i8, arg1: *List) {
     #(z - 4)
 loop:
     #(x -= 1)
+    if #eq {
+        x = 0
+    } else {
+        x = 1
+    }
     y @r2 = x
     bne loop
     x = y ^ z

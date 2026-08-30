@@ -14,14 +14,17 @@ impl BitSet {
         self.0 |= 1 << ix;
     }
 
+    #[expect(unused)]
     pub fn remove(&mut self, ix: usize) {
         self.0 &= !(1 << ix);
     }
 
+    #[expect(unused)]
     pub fn toggle(&mut self, ix: usize) {
         self.0 ^= 1 << ix;
     }
 
+    #[expect(unused)]
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }

@@ -1,14 +1,15 @@
 use std::{collections::HashMap, io::Write};
 
 use crate::{
-    generate::{GenCtx, gen_stmt},
+    generate::GenCtx,
+    ifthen,
     ir::IrCtx,
     lex::Error,
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
     svd::Peripherals,
-    typeinf::{TypeInferCtx, TypeMap},
+    typeinf::TypeInferCtx,
     types::TypePool,
 };
 
@@ -154,6 +155,8 @@ impl FnScope {
         }
         let type_inf_ctx = TypeInferCtx::new(types, peripherals);
         let typemap = type_inf_ctx.infer(func)?;
+        let if_analysis = ifthen::analyze_ift(&func.body);
+        println!("{if_analysis:?}");
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
                 let mut regmap = self.basic_blocks[*pred].regmap.clone();
@@ -166,13 +169,15 @@ impl FnScope {
             };
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
+                let if_state = &if_analysis[ix];
                 if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, peripherals);
                     let ir = ir_ctx.lower(stmt)?;
                     let mut gen_ctx = GenCtx::new(types, w);
-                    gen_ctx.gen_from_ir(&ir)?;
+                    gen_ctx.gen_from_ir(&ir, if_state)?;
                 } else {
-                    gen_stmt(stmt, &regmap, w)?;
+                    let mut gen_ctx = GenCtx::new(types, w);
+                    gen_ctx.gen_stmt(stmt, &regmap, if_state)?;
                 }
                 regmap.apply(stmt);
                 //_ = writeln!(w, "{ix}: {regmap:?}");

@@ -7,6 +7,7 @@ use crate::{compile::FnScope, lex::tokenize, parse::parse_program, types::TypePo
 mod bitset;
 mod compile;
 mod generate;
+mod ifthen;
 mod ir;
 mod lex;
 mod parse;

@@ -15,7 +15,7 @@ pub struct Token {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokBody {
     Newline,
-    Idenfifier(String),
+    Identifier(String),
     Number(i64),
     Comma,
     Period,
@@ -62,7 +62,7 @@ impl Token {
     }
 
     pub fn as_ident(&self) -> Option<&str> {
-        if let TokBody::Idenfifier(id) = &self.tok {
+        if let TokBody::Identifier(id) = &self.tok {
             Some(id)
         } else {
             None
@@ -74,7 +74,7 @@ impl Token {
     }
 
     pub fn is_ident(&self) -> bool {
-        matches!(self.tok, TokBody::Idenfifier(_))
+        matches!(self.tok, TokBody::Identifier(_))
     }
 }
 
@@ -162,7 +162,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     }
                     end += c1.len_utf8();
                 }
-                tokens.push(Token::new(loc, TokBody::Idenfifier(src[ix..end].into())));
+                tokens.push(Token::new(loc, TokBody::Identifier(src[ix..end].into())));
                 ix = end;
                 continue;
             }
@@ -207,7 +207,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
 
 impl TokBody {
     pub fn match_str(&self, other: &str) -> bool {
-        if let TokBody::Idenfifier(s) = self {
+        if let TokBody::Identifier(s) = self {
             s == other
         } else {
             false

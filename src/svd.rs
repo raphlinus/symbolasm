@@ -20,7 +20,7 @@ pub struct Peripheral {
 }
 
 pub fn parse_svd(svd: &str, types: &mut TypePool) -> Result<Peripherals, Error> {
-    eprintln!("parsing {svd}");
+    //eprintln!("parsing {svd}");
     let bytes = std::fs::read_to_string(svd)?;
     let reader = XmlReader::parse(&bytes);
     let root = reader.root_element()?;
@@ -36,7 +36,7 @@ pub fn parse_svd(svd: &str, types: &mut TypePool) -> Result<Peripherals, Error> 
             }
         }
     }
-    eprintln!("{periphs:?}");
+    //eprintln!("{periphs:?}");
     Ok(periphs)
 }
 
@@ -51,7 +51,7 @@ fn parse_peripheral(
     for child in e.children() {
         if let BodyNode::Element(e) = child {
             let tag_name = e.tag_name();
-            eprintln!("{tag_name}");
+            //eprintln!("{tag_name}");
             match tag_name {
                 "name" => {
                     name = get_text_content(e);

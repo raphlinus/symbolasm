@@ -6,6 +6,7 @@
 use std::{io::Write, ops::Deref};
 
 use crate::{
+    ifthen::IfState,
     ir::{Assign, BinOp, Body, Expr, Ir, UnaryOp},
     lex::{Error, TokBody, Token},
     regmap::{Regmap, parse_register},
@@ -30,16 +31,16 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Self { types, w }
     }
 
-    pub fn gen_from_ir(&mut self, ir: &Ir) -> Result<(), Error> {
+    pub fn gen_from_ir(&mut self, ir: &Ir, if_state: &IfState) -> Result<(), Error> {
         //println!("{ir:?}");
         match ir {
-            Ir::Assign(assign) => self.gen_assign(assign),
-            Ir::WithFlags(expr) => self.gen_withflags(expr),
-            Ir::WithAddrUpdate(ir, inc) => self.gen_addr_update(ir, *inc),
+            Ir::Assign(assign) => self.gen_assign(assign, if_state),
+            Ir::WithFlags(expr) => self.gen_withflags(expr, if_state),
+            Ir::WithAddrUpdate(ir, inc) => self.gen_addr_update(ir, *inc, if_state),
         }
     }
 
-    fn gen_assign(&mut self, assign: &Assign) -> Result<(), Error> {
+    fn gen_assign(&mut self, assign: &Assign, if_state: &IfState) -> Result<(), Error> {
         match assign {
             Assign {
                 with_flags,
@@ -49,7 +50,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ..
                     },
                 rhs,
-            } => self.gen_assign_reg(*lhs, rhs, (*with_flags).into()),
+            } => self.gen_assign_reg(*lhs, rhs, (*with_flags).into(), if_state),
             Assign {
                 with_flags: _,
                 lhs:
@@ -58,7 +59,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ..
                     },
                 rhs,
-            } => self.gen_store(addr, rhs, 0),
+            } => self.gen_store(addr, rhs, 0, if_state),
             Assign {
                 with_flags: _,
                 lhs:
@@ -67,7 +68,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ty,
                     },
                 rhs,
-            } => self.gen_store_field(*ty, base, *field, rhs),
+            } => self.gen_store_field(*ty, base, *field, rhs, if_state),
             Assign {
                 with_flags: _,
                 lhs:
@@ -76,15 +77,22 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ..
                     },
                 rhs,
-            } => self.gen_assign_slice(a, *start, *end, rhs),
+            } => self.gen_assign_slice(a, *start, *end, rhs, if_state),
             _ => todo!(),
         }
     }
 
-    fn gen_assign_reg(&mut self, lhs: u8, rhs: &Expr, with_flags: WithFlags) -> Result<(), Error> {
+    fn gen_assign_reg(
+        &mut self,
+        lhs: u8,
+        rhs: &Expr,
+        with_flags: WithFlags,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
         match &rhs.body {
             Body::Reg(r) => {
-                write!(self.w, "    mov{} ", s(with_flags))?;
+                self.start_insn_flags("mov", with_flags, if_state)?;
+                write!(self.w, " ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
                 write_reg(*r, self.w)?;
@@ -95,23 +103,27 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // can be mvn if !n is imm12
                 // falls back to ldr
                 if *n < 0x1_0000 || is_imm8m(*n) {
-                    write!(self.w, "    mov{} ", s(with_flags))?;
+                    self.start_insn_flags("mov", with_flags, if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     writeln!(self.w, ", #{n}")?;
                 } else if is_imm8m(!n) {
-                    write!(self.w, "    mvn{} ", s(with_flags))?;
+                    self.start_insn_flags("mvn", with_flags, if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     writeln!(self.w, ", #{}", !n)?;
                 } else {
                     // TODO: fail if with_flags
-                    write!(self.w, "    ldr ")?;
+                    self.start_insn("ldr", if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     writeln!(self.w, ", ={n}")?;
                 }
             }
             Body::Unary(UnaryOp::Deref, rhs) => {
                 let insn = ldr_for_ty(self.types.pointee(rhs.ty));
-                write!(self.w, "    {insn} ")?;
+                self.start_insn(insn, if_state)?;
+                write!(self.w, " ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
                 self.gen_addr(rhs, 0)?;
@@ -119,7 +131,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
             }
             Body::Unary(UnaryOp::Neg, rhs) => {
                 if let Body::Reg(r) = &rhs.body {
-                    write!(self.w, "    rsb{} ", s(with_flags))?;
+                    self.start_insn_flags("rsb", with_flags, if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     write!(self.w, ", ")?;
                     write_reg(*r, self.w)?;
@@ -129,7 +142,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 }
             }
             Body::Unary(UnaryOp::Not, rhs) => {
-                write!(self.w, "    mvn{} ", s(with_flags))?;
+                self.start_insn_flags("mvn", with_flags, if_state)?;
+                write!(self.w, " ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
                 self.gen_operand2(rhs)?;
@@ -147,7 +161,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     };
                     rhs = b.deref();
                 }
-                write!(self.w, "    {insn}{} ", s(with_flags))?;
+                self.start_insn_flags(insn, with_flags, if_state)?;
+                write!(self.w, " ")?;
                 write_reg(lhs, self.w)?;
                 write!(self.w, ", ")?;
                 if let Body::Reg(r) = &a.body {
@@ -165,7 +180,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
             Body::Field(base, offset) => {
                 let insn = ldr_for_ty(Some(self.types.get(rhs.ty)));
                 if let Body::Reg(r) = &base.body {
-                    write!(self.w, "    {insn} ")?;
+                    self.start_insn_flags(insn, with_flags, if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     write!(self.w, ", [")?;
                     write_reg(*r, self.w)?;
@@ -185,7 +201,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // TODO: ensure end > start, otherwise error
                 let width = end - start;
                 if let Body::Reg(r) = &a.body {
-                    write!(self.w, "    {insn} ")?;
+                    self.start_insn_flags(insn, with_flags, if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(*r, self.w)?;
                     writeln!(self.w, ", #{start}, #{width}")?;
                 }
@@ -201,6 +218,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
         start: usize,
         end: usize,
         rhs: &Expr,
+        if_state: &IfState,
     ) -> Result<(), Error> {
         if let Body::Reg(r) = &a.body {
             // TODO: ensure end > start, otherwise error
@@ -210,12 +228,14 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     if *n != 0 {
                         Err("can only clear slices, not other immediates")?;
                     }
-                    write!(self.w, "    bfc ")?;
+                    self.start_insn("bfc", if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(*r, self.w)?;
                     writeln!(self.w, ", #{start}, #{width}")?;
                 }
                 Body::Reg(rhs) => {
-                    write!(self.w, "    bfi ")?;
+                    self.start_insn("bfi", if_state)?;
+                    write!(self.w, " ")?;
                     write_reg(*r, self.w)?;
                     write!(self.w, ", ")?;
                     write_reg(*rhs, self.w)?;
@@ -229,10 +249,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
-    fn gen_store(&mut self, addr: &Expr, rhs: &Expr, incr: i32) -> Result<(), Error> {
+    fn gen_store(
+        &mut self,
+        addr: &Expr,
+        rhs: &Expr,
+        incr: i32,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
         if let Body::Reg(r) = &rhs.body {
             let insn = str_for_ty(self.types.pointee(addr.ty));
-            write!(self.w, "    {insn} ")?;
+            self.start_insn(insn, if_state)?;
+            write!(self.w, " ")?;
             write_reg(*r, self.w)?;
             write!(self.w, ", ")?;
             self.gen_addr(addr, incr)?;
@@ -249,12 +276,14 @@ impl<'a, W: Write> GenCtx<'a, W> {
         base: &Expr,
         offset: usize,
         rhs: &Expr,
+        if_state: &IfState,
     ) -> Result<(), Error> {
         if let Body::Reg(rn) = &base.body
             && let Body::Reg(rd) = &rhs.body
         {
             let insn = str_for_ty(Some(self.types.get(ty)));
-            write!(self.w, "    {insn} ")?;
+            self.start_insn(insn, if_state)?;
+            write!(self.w, " ")?;
             write_reg(*rd, self.w)?;
             write!(self.w, ", [")?;
             write_reg(*rn, self.w)?;
@@ -266,11 +295,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
-    fn gen_withflags(&mut self, expr: &Expr) -> Result<(), Error> {
+    fn gen_withflags(&mut self, expr: &Expr, if_state: &IfState) -> Result<(), Error> {
         match &expr.body {
             Body::Binop(a, op, b) => {
                 let insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
-                write!(self.w, "    {insn} ",)?;
+                self.start_insn(insn, if_state)?;
+                write!(self.w, " ")?;
                 if let Body::Reg(r) = &a.body {
                     write_reg(*r, self.w)?;
                 } else {
@@ -286,16 +316,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
         Ok(())
     }
 
-    fn gen_addr_update(&mut self, ir: &Ir, incr: i32) -> Result<(), Error> {
+    fn gen_addr_update(&mut self, ir: &Ir, incr: i32, if_state: &IfState) -> Result<(), Error> {
         let Ir::Assign(Assign { lhs, rhs, .. }) = ir else {
             return Err("statement with addr update must be assignment")?;
         };
         if let Body::Unary(UnaryOp::Deref, addr) = &lhs.body {
-            self.gen_store(addr, rhs, incr)
+            self.gen_store(addr, rhs, incr, if_state)
         } else if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
             if let Body::Reg(r) = &lhs.body {
                 let insn = ldr_for_ty(self.types.pointee(addr.ty));
-                write!(self.w, "    {insn} ")?;
+                self.start_insn(insn, if_state)?;
+                write!(self.w, " ")?;
                 write_reg(*r, self.w)?;
                 write!(self.w, ", ")?;
                 self.gen_addr(addr, incr)?;
@@ -399,49 +430,99 @@ impl<'a, W: Write> GenCtx<'a, W> {
         }
         Ok(())
     }
-}
 
-// This should probably also move into GenCtx, but will still take regmap
-pub fn gen_stmt(stmt: &Stmt, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
-    match stmt {
-        Stmt::Label(l) => {
-            writeln!(w, "{l}:")?;
+    pub fn gen_stmt(
+        &mut self,
+        stmt: &Stmt,
+        regmap: &Regmap,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        match stmt {
+            Stmt::Label(l) => {
+                writeln!(self.w, "{l}:")?;
+            }
+            Stmt::Insn(insn) => match insn {
+                crate::stmt::Insn::Bx(target) => {
+                    if let Some(id) = target.as_ident() {
+                        self.start_insn("bx", if_state)?;
+                        write!(self.w, " ")?;
+                        write_var_reg(id, regmap, self.w)?;
+                        writeln!(self.w)?;
+                    } else {
+                        Err("bx target must be register")?;
+                    }
+                }
+                crate::stmt::Insn::BCond(cond, target) => {
+                    let insn = format!("b{cond}");
+                    self.start_insn(&insn, if_state)?;
+                    writeln!(self.w, " {target}")?;
+                }
+                crate::stmt::Insn::B(target) => {
+                    self.start_insn("b", if_state)?;
+                    writeln!(self.w, " {target}")?;
+                }
+                crate::stmt::Insn::Bl(target) => {
+                    self.start_insn("bl", if_state)?;
+                    writeln!(self.w, " {target}")?;
+                }
+                crate::stmt::Insn::Cbz(reg, target) => {
+                    if let Some(id) = reg.as_ident() {
+                        self.start_insn("cbz", if_state)?;
+                        write!(self.w, " ")?;
+                        write_var_reg(id, regmap, self.w)?;
+                        writeln!(self.w, ", {target}")?;
+                    } else {
+                        Err("bx target must be register")?;
+                    }
+                }
+                crate::stmt::Insn::Cbnz(reg, target) => {
+                    if let Some(id) = reg.as_ident() {
+                        self.start_insn("cbnz", if_state)?;
+                        write!(self.w, " ")?;
+                        write_var_reg(id, regmap, self.w)?;
+                        writeln!(self.w, ", {target}")?;
+                    } else {
+                        Err("bx target must be register")?;
+                    }
+                }
+            },
+            Stmt::StartIf(cond) => {
+                if let Some(cond) = cond.as_ident() {
+                    self.start_insn("", if_state)?;
+                    writeln!(self.w, " {cond}")?;
+                }
+            }
+            Stmt::Else | Stmt::EndBlock => (),
+            _ => todo!("nyi"),
         }
-        Stmt::Insn(insn) => match insn {
-            crate::stmt::Insn::Bx(target) => {
-                if let Some(id) = target.as_ident() {
-                    write!(w, "    bx ")?;
-                    write_var_reg(id, regmap, w)?;
-                    writeln!(w)?;
-                } else {
-                    Err("bx target must be register")?;
-                }
-            }
-            crate::stmt::Insn::BCond(cond, target) => writeln!(w, "    b{cond} {target}")?,
-            crate::stmt::Insn::B(target) => writeln!(w, "    b {target}")?,
-            crate::stmt::Insn::Bl(target) => writeln!(w, "    bl {target}")?,
-            crate::stmt::Insn::Cbz(reg, target) => {
-                if let Some(id) = reg.as_ident() {
-                    write!(w, "    cbz ")?;
-                    write_var_reg(id, regmap, w)?;
-                    writeln!(w, ", {target}")?;
-                } else {
-                    Err("bx target must be register")?;
-                }
-            }
-            crate::stmt::Insn::Cbnz(reg, target) => {
-                if let Some(id) = reg.as_ident() {
-                    write!(w, "    cbnz ")?;
-                    write_var_reg(id, regmap, w)?;
-                    writeln!(w, ", {target}")?;
-                } else {
-                    Err("bx target must be register")?;
-                }
-            }
-        },
-        _ => todo!("nyi"),
+        Ok(())
     }
-    Ok(())
+
+    fn start_insn(&mut self, insn: &str, if_state: &IfState) -> Result<(), Error> {
+        match if_state {
+            IfState::Default => write!(self.w, "    {insn}")?,
+            IfState::Ift(items) => {
+                write!(self.w, "    i")?;
+                for is_then in items {
+                    let c = if *is_then { "t" } else { "e" };
+                    write!(self.w, "{c}")?;
+                }
+            }
+            IfState::Then(cond) => write!(self.w, "    {insn}{}", cond.to_str())?,
+            IfState::Else(cond) => write!(self.w, "    {insn}{}", (!*cond).to_str())?,
+        }
+        Ok(())
+    }
+
+    fn start_insn_flags(
+        &mut self,
+        insn: &str,
+        with_flags: WithFlags,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        let insn_s = format!("{insn}{}", s(with_flags));
+        self.start_insn(&insn_s, if_state)
+    }
 }
 
 fn write_var_reg(id: &str, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
