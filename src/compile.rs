@@ -156,7 +156,7 @@ impl FnScope {
         let type_inf_ctx = TypeInferCtx::new(types, peripherals);
         let typemap = type_inf_ctx.infer(func)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
-        println!("{if_analysis:?}");
+        //println!("{if_analysis:?}");
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
                 let mut regmap = self.basic_blocks[*pred].regmap.clone();

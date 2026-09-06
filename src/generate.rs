@@ -256,16 +256,76 @@ impl<'a, W: Write> GenCtx<'a, W> {
         incr: i32,
         if_state: &IfState,
     ) -> Result<(), Error> {
-        if let Body::Reg(r) = &rhs.body {
-            let insn = str_for_ty(self.types.pointee(addr.ty));
-            self.start_insn(insn, if_state)?;
-            write!(self.w, " ")?;
-            write_reg(*r, self.w)?;
-            write!(self.w, ", ")?;
-            self.gen_addr(addr, incr)?;
-            writeln!(self.w)?;
-        } else {
-            Err("store instructions only take registers")?;
+        match &rhs.body {
+            Body::Reg(r) => {
+                let insn = str_for_ty(self.types.pointee(addr.ty));
+                self.start_insn(insn, if_state)?;
+                write!(self.w, " ")?;
+                write_reg(*r, self.w)?;
+                write!(self.w, ", ")?;
+                self.gen_addr(addr, incr)?;
+                writeln!(self.w)?;
+            }
+            Body::Tuple(els) => {
+                // multiple store; can be either stm or strd
+                // try stm first (has a chance at 16 bit encoding)
+                // TODO: allow decrement also
+                let mut stm_ok = matches!(addr.body, Body::Reg(_))
+                    && (incr == 0 || incr == 4 * els.len() as i32);
+                let mut last_r = None;
+                for el in els {
+                    let Body::Reg(r) = &el.body else {
+                        return Err("tuple element for store must be register")?;
+                    };
+                    if let Some(last_r) = last_r
+                        && r <= last_r
+                    {
+                        stm_ok = false;
+                    }
+                    last_r = Some(r);
+                }
+                if stm_ok {
+                    self.start_insn("stm", if_state)?;
+                    write!(self.w, " ")?;
+                    if let Body::Reg(addr_r) = &addr.body {
+                        write_reg(*addr_r, self.w)?;
+                    }
+                    if incr != 0 {
+                        write!(self.w, "!")?;
+                    }
+                    write!(self.w, ", {{")?;
+                    let mut comma = false;
+                    for el in els {
+                        if comma {
+                            write!(self.w, ", ")?;
+                        }
+                        if let Body::Reg(r) = &el.body {
+                            write_reg(*r, self.w)?;
+                        }
+                        comma = true;
+                    }
+                    writeln!(self.w, "}}")?;
+                    return Ok(());
+                }
+                // Now try strd
+                if els.len() != 2 {
+                    Err("tuple store not eligible for stm, strd only does pairs")?;
+                }
+                self.start_insn("strd", if_state)?;
+                write!(self.w, " ")?;
+                for el in els {
+                    if let Body::Reg(r) = &el.body {
+                        write_reg(*r, self.w)?;
+                    }
+                    write!(self.w, ", ")?;
+                }
+                self.gen_addr(addr, incr)?;
+                writeln!(self.w)?;
+            }
+            _ => {
+                println!("{rhs:?}");
+                Err("store instructions only take registers")?;
+            }
         }
         Ok(())
     }

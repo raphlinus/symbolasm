@@ -38,6 +38,18 @@ loop:
     bx lr
 }
 
+fn tuples(p: *u32) {
+    val @r1 = 1
+    val @r2 = 2
+    *p = (r1, r2); p += 8
+    *p = (r1, r2)
+    *p = (r2, r2)
+    *p = (r2, r2); p += 12
+    *(p + 4) = (r2, r2)
+    offset @r3 = 12
+    *(p + offset) = (r2, r2)
+}
+
 fn list_len(list: *List) {
     len @r1 = 0
     cbz list, done

@@ -144,6 +144,7 @@ impl<'a> TypeInferCtx<'a> {
                 }
             }
             parse::Expr::Slice(expr, _, _) => self.try_get_type(expr),
+            parse::Expr::Tuple(_) => todo!(),
         }
     }
 }

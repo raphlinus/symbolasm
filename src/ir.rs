@@ -43,6 +43,7 @@ pub enum Body {
     // or whether it should be *(base + offset)
     Field(Box<Expr>, usize),
     Slice(Box<Expr>, usize, usize),
+    Tuple(Vec<Expr>),
 }
 
 struct Place {
@@ -297,6 +298,18 @@ impl<'a> IrCtx<'a> {
                 let expr = self.lower_expr(expr, None)?;
                 let ty = expr.ty;
                 let body = Body::Slice(expr.into(), *start, *end);
+                Ok(Expr { ty, body })
+            }
+            parse::Expr::Tuple(exps) => {
+                let mut irs = vec![];
+                let mut types = vec![];
+                for expr in exps {
+                    let ir = self.lower_expr(expr, None)?;
+                    types.push(ir.ty);
+                    irs.push(ir);
+                }
+                let ty = self.types.intern_tuple(&types);
+                let body = Body::Tuple(irs);
                 Ok(Expr { ty, body })
             }
         }

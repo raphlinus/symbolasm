@@ -8,6 +8,9 @@ pub struct TypeHandle(usize);
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StructHandle(usize);
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TupleHandle(usize);
+
 #[derive(Default)]
 pub struct TypePool {
     types: Vec<Type>,
@@ -16,8 +19,11 @@ pub struct TypePool {
     info: Vec<TypeInfo>,
     globals: HashMap<String, TypeHandle>,
     structs: Vec<StructLayout>,
+    tuples: Vec<Vec<TypeHandle>>,
+    tuple_inv: HashMap<Vec<TypeHandle>, TupleHandle>,
 }
 
+// We can probably derive Copy here too
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Type {
     Default,
@@ -29,7 +35,7 @@ pub enum Type {
     I8,
     Ptr(TypeHandle),
     Struct(StructHandle),
-    // TODO: structs and more
+    Tuple(TupleHandle),
 }
 
 #[derive(Clone, Copy)]
@@ -176,6 +182,7 @@ impl TypePool {
             Type::Ptr(_type_handle) => TypeInfo::new(4, 4),
             // This will get filled in later (in `populate_struct`)
             Type::Struct(_) => TypeInfo::new(0, 0),
+            Type::Tuple(_) => TypeInfo::new(0, 0),
         }
     }
 
@@ -183,6 +190,37 @@ impl TypePool {
         let layout = &self.structs[s.0].0;
         // This is O(n) in struct size. If we expected huge structs, hashmap would be good.
         layout.iter().find(|f| f.name == field)
+    }
+
+    pub fn intern_tuple(&mut self, els: &[TypeHandle]) -> TypeHandle {
+        if let Some(handle) = self.tuple_inv.get(els) {
+            self.get_handle(&Type::Tuple(*handle))
+        } else {
+            let handle = TupleHandle(self.tuples.len());
+            self.tuples.push(els.to_vec());
+            self.tuple_inv.insert(els.to_vec(), handle);
+            // TODO: size & alignment, set types, info, inv_map
+            let mut offset = 0;
+            let mut align = 1;
+            for el in els {
+                let el_info = self.info[el.0];
+                let align_mask = el_info.align - 1;
+                offset = (offset + align_mask) & !align_mask;
+                align = align.max(el_info.align);
+            }
+            let info = TypeInfo::new(offset, align);
+            let ty = Type::Tuple(handle);
+            self.types.push(ty.clone());
+            self.info.push(info);
+            let ty_handle = TypeHandle(self.types.len());
+            self.inv_map.insert(ty.clone(), ty_handle);
+            ty_handle
+        }
+    }
+
+    #[expect(unused)]
+    pub fn info(&self, handle: TypeHandle) -> TypeInfo {
+        self.info[handle.0]
     }
 }
 

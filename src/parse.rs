@@ -46,6 +46,7 @@ pub enum Expr {
     Cast(Box<Expr>, Type),
     Field(Box<Expr>, Token),
     Slice(Box<Expr>, usize, usize),
+    Tuple(Vec<Expr>),
 }
 
 #[derive(Debug)]
@@ -328,9 +329,26 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
     let mut expr = match first.tok {
         TokBody::OpenParen => {
             let expr = parse_expr(toks)?;
-            // TODO: handle comma for tuple formation
-            toks.expect(&TokBody::CloseParen)?;
-            expr
+            let next = toks.next().ok_or("unexpected eof inside parens")?;
+            match &next.tok {
+                TokBody::CloseParen => expr,
+                TokBody::Comma => {
+                    let mut exprs = vec![expr];
+                    loop {
+                        let Some(tok) = toks.peek() else {
+                            return Err("unexpected eof inside parens")?;
+                        };
+                        if tok.tok == TokBody::CloseParen {
+                            break;
+                        }
+                        let expr = parse_expr(toks)?;
+                        exprs.push(expr);
+                    }
+                    _ = toks.next(); // consume close paren
+                    Expr::Tuple(exprs)
+                }
+                _ => Err("unknown separator in parens")?,
+            }
         }
         TokBody::Identifier(_) => Expr::Ident(first.clone()),
         TokBody::Number(_) => Expr::Literal(first.clone()),
