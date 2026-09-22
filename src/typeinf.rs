@@ -71,7 +71,6 @@ impl<'a> TypeInferCtx<'a> {
                     false
                 }
             }
-            Stmt::AssignPlace(lhs, _place, rhs) => self.infer_assign(lhs, rhs),
             Stmt::WithFlagsAssign(lhs, op, rhs) => {
                 if op.tok == TokBody::Equals {
                     self.infer_assign(lhs, rhs)
@@ -79,7 +78,6 @@ impl<'a> TypeInferCtx<'a> {
                     false
                 }
             }
-            Stmt::WithFlagsAssignPlace(lhs, _place, rhs) => self.infer_assign(lhs, rhs),
             Stmt::WithAddrUpdate(stmt, _, _, _) => self.infer_stmt(stmt),
             _ => false,
         }

@@ -5,11 +5,8 @@ pub enum Stmt {
     Label(String),
     /// Includes assignment ops as well as `Equals`
     Assign(Expr, Token, Expr),
-    /// var @ reg = expr
-    AssignPlace(Expr, Token, Expr),
     WithFlagsExpr(Expr),
     WithFlagsAssign(Expr, Token, Expr),
-    WithFlagsAssignPlace(Expr, Token, Expr),
     WithAddrUpdate(Box<Stmt>, Expr, i32, Expr),
     Insn(Insn),
     StartIf(Token),

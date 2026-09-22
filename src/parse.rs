@@ -218,14 +218,6 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                     let rhs = parse_expr(toks)?;
                     let stmt = Stmt::Assign(lhs, op.clone(), rhs);
                     addr_update_helper(toks, stmt)
-                } else if op.tok == TokBody::At {
-                    _ = toks.next();
-                    let reg = toks.next().ok_or("expected reg")?.clone();
-                    // TODO: ensure reg is valid register
-                    toks.expect(&TokBody::Equals)?;
-                    let rhs = parse_expr(toks)?;
-                    let stmt = Stmt::AssignPlace(lhs, reg, rhs);
-                    addr_update_helper(toks, stmt)
                 } else {
                     Err("unhandled syntax")?
                 }
@@ -394,14 +386,6 @@ fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
         toks.expect(&TokBody::CloseParen)?;
         toks.expect(&TokBody::Newline)?;
         return Ok(Stmt::WithFlagsAssign(lhs, op.clone(), rhs));
-    } else if op.tok == TokBody::At {
-        let reg = toks.next().ok_or("expected reg")?.clone();
-        // TODO: ensure reg is valid register
-        toks.expect(&TokBody::Equals)?;
-        let rhs = parse_expr(toks)?;
-        toks.expect(&TokBody::CloseParen)?;
-        toks.expect(&TokBody::Newline)?;
-        return Ok(Stmt::WithFlagsAssignPlace(lhs, reg, rhs));
     } else if op.tok == TokBody::CloseParen {
         toks.expect(&TokBody::Newline)?;
         return Ok(Stmt::WithFlagsExpr(lhs));

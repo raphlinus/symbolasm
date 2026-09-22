@@ -46,11 +46,6 @@ pub enum Body {
     Tuple(Vec<Expr>),
 }
 
-struct Place {
-    var: String,
-    place: u8,
-}
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BinOp {
     Add,
@@ -117,29 +112,6 @@ impl UnaryOp {
     }
 }
 
-impl Place {
-    fn from_ast(lhs: &parse::Expr, place: &Token) -> Result<Self, Error> {
-        let var = lhs
-            .as_ident()
-            .ok_or("placed expr must be ident")?
-            .to_owned();
-        if let TokBody::Identifier(place) = &place.tok {
-            let place = parse_register(place).expect("place must be register");
-            Ok(Self { var, place })
-        } else {
-            Err("place must be register name")?
-        }
-    }
-
-    fn lookup(&self, id: &str) -> Option<u8> {
-        if self.var == id {
-            Some(self.place)
-        } else {
-            None
-        }
-    }
-}
-
 impl<'a> IrCtx<'a> {
     pub fn new(
         regmap: &'a Regmap,
@@ -159,9 +131,7 @@ impl<'a> IrCtx<'a> {
         matches!(
             stmt,
             Stmt::Assign(_, _, _)
-                | Stmt::AssignPlace(_, _, _)
                 | Stmt::WithFlagsAssign(_, _, _)
-                | Stmt::WithFlagsAssignPlace(_, _, _)
                 | Stmt::WithFlagsExpr(_)
                 | Stmt::WithAddrUpdate(_, _, _, _)
         )
@@ -169,20 +139,12 @@ impl<'a> IrCtx<'a> {
 
     pub fn lower(&mut self, stmt: &Stmt) -> Result<Ir, Error> {
         match stmt {
-            Stmt::Assign(lhs, op, rhs) => self.lower_assign(lhs, None, &op.tok, rhs, false),
-            Stmt::AssignPlace(lhs, place, rhs) => {
-                let place = Place::from_ast(lhs, place)?;
-                self.lower_assign(lhs, Some(&place), &TokBody::Equals, rhs, false)
-            }
+            Stmt::Assign(lhs, op, rhs) => self.lower_assign(lhs, &op.tok, rhs, false),
             Stmt::WithFlagsExpr(expr) => {
-                let expr = self.lower_expr(expr, None)?;
+                let expr = self.lower_expr(expr)?;
                 Ok(Ir::WithFlags(expr))
             }
-            Stmt::WithFlagsAssign(lhs, op, rhs) => self.lower_assign(lhs, None, &op.tok, rhs, true),
-            Stmt::WithFlagsAssignPlace(lhs, place, rhs) => {
-                let place = Place::from_ast(lhs, place)?;
-                self.lower_assign(lhs, Some(&place), &TokBody::Equals, rhs, true)
-            }
+            Stmt::WithFlagsAssign(lhs, op, rhs) => self.lower_assign(lhs, &op.tok, rhs, true),
             Stmt::WithAddrUpdate(stmt, lhs, sign, incr) => {
                 self.lower_addr_update(stmt, lhs, *sign, incr)
             }
@@ -193,13 +155,12 @@ impl<'a> IrCtx<'a> {
     fn lower_assign(
         &mut self,
         lhs: &parse::Expr,
-        place: Option<&Place>,
         op: &TokBody,
         rhs: &parse::Expr,
         with_flags: bool,
     ) -> Result<Ir, Error> {
-        let lhs = self.lower_expr(lhs, place)?;
-        let rhs = self.lower_expr(rhs, None)?;
+        let lhs = self.lower_expr(lhs)?;
+        let rhs = self.lower_expr(rhs)?;
         if *op == TokBody::Equals {
             Ok(Ir::Assign(Assign {
                 with_flags,
@@ -218,14 +179,12 @@ impl<'a> IrCtx<'a> {
         }
     }
 
-    fn lower_expr(&mut self, expr: &parse::Expr, place: Option<&Place>) -> Result<Expr, Error> {
+    fn lower_expr(&mut self, expr: &parse::Expr) -> Result<Expr, Error> {
         match expr {
             parse::Expr::Ident(tok) => {
                 let id = tok.as_ident().unwrap();
                 let ty = self.type_of_ident(id).ok_or("type lookup failed")?;
-                let reg = if let Some(reg) = place.and_then(|p| p.lookup(id)) {
-                    reg
-                } else if let Some(reg) = parse_register(id) {
+                let reg = if let Some(reg) = parse_register(id) {
                     reg
                 } else {
                     self.regmap
@@ -245,15 +204,31 @@ impl<'a> IrCtx<'a> {
                 }
             }
             parse::Expr::Binop(lhs, op, rhs) => {
-                let lhs = self.lower_expr(lhs, None)?;
-                let rhs = self.lower_expr(rhs, None)?;
-                let op = BinOp::from_tok(&op.tok).ok_or("unknown binop")?;
-                let ty = lhs.ty;
-                let body = Body::Binop(lhs.into(), op, rhs.into());
-                Ok(Expr { ty, body })
+                if op.tok == TokBody::At {
+                    // It's possible these checks move earlier
+                    let Some(id) = lhs.as_ident() else {
+                        return Err("placed variable must be identifier")?;
+                    };
+                    let ty = self.type_of_ident(id).ok_or("type lookup failed")?;
+                    let Some(place) = rhs.as_ident() else {
+                        return Err("place must be identifier")?;
+                    };
+                    let Some(reg) = parse_register(place) else {
+                        return Err("place must be a register")?;
+                    };
+                    let body = Body::Reg(reg);
+                    Ok(Expr { ty, body })
+                } else {
+                    let lhs = self.lower_expr(lhs)?;
+                    let rhs = self.lower_expr(rhs)?;
+                    let op = BinOp::from_tok(&op.tok).ok_or("unknown binop")?;
+                    let ty = lhs.ty;
+                    let body = Body::Binop(lhs.into(), op, rhs.into());
+                    Ok(Expr { ty, body })
+                }
             }
             parse::Expr::Unary(op, expr) => {
-                let expr = self.lower_expr(expr, None)?;
+                let expr = self.lower_expr(expr)?;
                 let op = UnaryOp::from_tok(&op.tok).ok_or("unknown unary op")?;
                 let ty = match op {
                     UnaryOp::Deref => match self.types.get(expr.ty) {
@@ -267,7 +242,7 @@ impl<'a> IrCtx<'a> {
                 Ok(Expr { ty, body })
             }
             parse::Expr::Cast(lhs, ty) => {
-                let mut expr = self.lower_expr(lhs, place)?;
+                let mut expr = self.lower_expr(lhs)?;
                 let ty = self.types.intern_from_ast(ty)?;
                 // Here we choose not to have a separate cast expr, but that might
                 // be useful later.
@@ -278,7 +253,7 @@ impl<'a> IrCtx<'a> {
                 if expr.as_ident() == Some("peripherals") {
                     return self.lower_peripheral(field);
                 }
-                let expr = self.lower_expr(expr, None)?;
+                let expr = self.lower_expr(expr)?;
                 // TODO: support s.a.b, in which case the type is a struct
                 let Type::Ptr(struct_ty) = self.types.get(expr.ty) else {
                     return Err("base must be pointer")?;
@@ -295,7 +270,7 @@ impl<'a> IrCtx<'a> {
                 Ok(Expr { ty, body })
             }
             parse::Expr::Slice(expr, start, end) => {
-                let expr = self.lower_expr(expr, None)?;
+                let expr = self.lower_expr(expr)?;
                 let ty = expr.ty;
                 let body = Body::Slice(expr.into(), *start, *end);
                 Ok(Expr { ty, body })
@@ -304,7 +279,7 @@ impl<'a> IrCtx<'a> {
                 let mut irs = vec![];
                 let mut types = vec![];
                 for expr in exps {
-                    let ir = self.lower_expr(expr, None)?;
+                    let ir = self.lower_expr(expr)?;
                     types.push(ir.ty);
                     irs.push(ir);
                 }
@@ -339,9 +314,9 @@ impl<'a> IrCtx<'a> {
         incr: &parse::Expr,
     ) -> Result<Ir, Error> {
         let ir = self.lower(stmt)?;
-        let _lhs = self.lower_expr(lhs, None)?;
+        let _lhs = self.lower_expr(lhs)?;
         // TODO: check that _lhs matches addr in the stmt
-        let rhs = self.lower_expr(incr, None)?;
+        let rhs = self.lower_expr(incr)?;
         let Body::Imm(incr) = &rhs.body else {
             return Err("addr increment must be integer")?;
         };

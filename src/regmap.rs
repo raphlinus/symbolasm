@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{
     bitset::BitSet,
-    lex::Token,
+    lex::{TokBody, Token},
     parse::{Args, Expr},
     stmt::{Insn, Stmt},
 };
@@ -61,26 +61,43 @@ impl Regmap {
         self.killed_regs.insert(reg as usize);
     }
 
-    fn kill_expr(&mut self, lhs: &Expr) {
+    fn kill_ident(&mut self, lhs: &Token) {
         if let Some(id) = lhs.as_ident()
             && let Some(n) = parse_register(id)
         {
             self.kill(n);
         }
-        // TODO: also handle slice
     }
 
     pub fn apply(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Assign(lhs, _op, _rhs) => self.kill_expr(lhs),
-            Stmt::AssignPlace(lhs, place, _rhs) => self.place_expr(lhs, place),
-            Stmt::WithFlagsAssignPlace(lhs, place, _rhs) => self.place_expr(lhs, place),
+            Stmt::Assign(lhs, _op, _rhs) => self.apply_assign(lhs),
             Stmt::Insn(Insn::Bl(_)) => {
                 // By ABI convention
                 for r in [0, 1, 2, 3, 12, 14] {
                     self.kill(r);
                 }
             }
+            _ => (),
+        }
+    }
+
+    fn apply_assign(&mut self, lhs: &Expr) {
+        match lhs {
+            Expr::Ident(id) => self.kill_ident(id),
+            Expr::Binop(a, op, b) => {
+                if op.tok == TokBody::At
+                    && let Expr::Ident(place) = &**b
+                {
+                    self.place_expr(a, place);
+                }
+            }
+            Expr::Tuple(exps) => {
+                for expr in exps {
+                    self.apply_assign(expr);
+                }
+            }
+            Expr::Slice(a, _, _) => self.apply_assign(a),
             _ => (),
         }
     }

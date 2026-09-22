@@ -54,10 +54,8 @@ pub fn analyze_ift(body: &[Stmt]) -> Vec<IfState> {
                     // return a result (can also catch invalid condition codes).
                     Stmt::StartIf(_) => panic!("nested ift not allowed"),
                     Stmt::Assign(_, _, _)
-                    | Stmt::AssignPlace(_, _, _)
                     | Stmt::WithFlagsExpr(_)
                     | Stmt::WithFlagsAssign(_, _, _)
-                    | Stmt::WithFlagsAssignPlace(_, _, _)
                     | Stmt::WithAddrUpdate(_, _, _, _)
                     | Stmt::Insn(_) => {
                         result[j] = if is_then {

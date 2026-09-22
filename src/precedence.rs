@@ -3,6 +3,7 @@ use crate::lex::TokBody;
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub enum Precedence {
     Cast,
+    Place,
     Multiplication,
     Addition,
     Shift,
@@ -15,6 +16,7 @@ pub enum Precedence {
 impl Precedence {
     pub fn of(tok: &TokBody) -> Option<Self> {
         match tok {
+            TokBody::At => Some(Precedence::Place),
             TokBody::Asterisk | TokBody::Slash => Some(Precedence::Multiplication),
             TokBody::Plus | TokBody::Minus => Some(Precedence::Addition),
             TokBody::LessLess | TokBody::GreaterGreater => Some(Precedence::Shift),
