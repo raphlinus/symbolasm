@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 use crate::{lex::Token, parse::Expr};
 
 #[derive(Debug)]

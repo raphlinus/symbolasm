@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Analysis of ift blocks.
 
 use crate::stmt::Stmt;

@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Implementation of register map for placing variables
 
 use std::collections::HashMap;

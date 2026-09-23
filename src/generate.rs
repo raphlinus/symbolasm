@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Generation of assembly language.
 //!
 //! This approach is clunky, and is going to run into problems when types are

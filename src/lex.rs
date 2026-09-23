@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Tokenizer
 
 /// Location in source file. Will expand to identify multiple files.

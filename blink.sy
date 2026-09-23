@@ -1,3 +1,9 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+// A minimal program that can blink the LED on a Fruit Jam board.
+// It requires .vectors and .image_def sections.
+
 fn start() {
     mask @r0 = 0x240
     bl clear_reset

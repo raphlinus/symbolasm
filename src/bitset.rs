@@ -1,3 +1,6 @@
+// Copyright 2026 Raph Levien
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! A basic bitset impl
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
