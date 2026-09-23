@@ -225,7 +225,7 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                 Err("unexpected eof in stmt")?
             }
         }
-        TokBody::Asterisk => {
+        TokBody::Asterisk | TokBody::OpenParen => {
             toks.back_one();
             let lhs = parse_expr(toks)?;
             let op = toks.next().ok_or("eof in assignment")?.clone();

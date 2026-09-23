@@ -40,14 +40,19 @@ loop:
 
 fn tuples(p: *u32) {
     val @r1 = 1
-    val @r2 = 2
-    *p = (r1, r2); p += 8
-    *p = (r1, r2)
-    *p = (r2, r2)
-    *p = (r2, r2); p += 12
-    *(p + 4) = (r2, r2)
+    val2 @r2 = 2
+    *p = (val, val2); p += 8
+    *p = (val, val2)
+    *p = (val2, val2)
+    *p = (val2, val2); p += 12
+    *(p + 4) = (val2, val2)
     offset @r3 = 12
-    *(p + offset) = (r2, r2)
+    *(p + offset) = (val2, val2)
+    (val, val2) = *p
+    (val, val2) = *p; p += 8
+    (val3 @r3, val) = *p
+    (val, val4 @r4) = *p
+    val = val3 + val4
 }
 
 fn list_len(list: *List) {

@@ -78,6 +78,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     },
                 rhs,
             } => self.gen_assign_slice(a, *start, *end, rhs, if_state),
+            Assign {
+                with_flags: _,
+                lhs:
+                    Expr {
+                        body: Body::Tuple(els),
+                        ..
+                    },
+                rhs,
+            } => self.gen_load_tuple(els, rhs, if_state),
             _ => todo!(),
         }
     }
@@ -267,66 +276,91 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 writeln!(self.w)?;
             }
             Body::Tuple(els) => {
-                // multiple store; can be either stm or strd
-                // try stm first (has a chance at 16 bit encoding)
-                // TODO: allow decrement also
-                let mut stm_ok = matches!(addr.body, Body::Reg(_))
-                    && (incr == 0 || incr == 4 * els.len() as i32);
-                let mut last_r = None;
-                for el in els {
-                    let Body::Reg(r) = &el.body else {
-                        return Err("tuple element for store must be register")?;
-                    };
-                    if let Some(last_r) = last_r
-                        && r <= last_r
-                    {
-                        stm_ok = false;
-                    }
-                    last_r = Some(r);
-                }
-                if stm_ok {
-                    self.start_insn("stm", if_state)?;
-                    write!(self.w, " ")?;
-                    if let Body::Reg(addr_r) = &addr.body {
-                        write_reg(*addr_r, self.w)?;
-                    }
-                    if incr != 0 {
-                        write!(self.w, "!")?;
-                    }
-                    write!(self.w, ", {{")?;
-                    let mut comma = false;
-                    for el in els {
-                        if comma {
-                            write!(self.w, ", ")?;
-                        }
-                        if let Body::Reg(r) = &el.body {
-                            write_reg(*r, self.w)?;
-                        }
-                        comma = true;
-                    }
-                    writeln!(self.w, "}}")?;
-                    return Ok(());
-                }
-                // Now try strd
-                if els.len() != 2 {
-                    Err("tuple store not eligible for stm, strd only does pairs")?;
-                }
-                self.start_insn("strd", if_state)?;
-                write!(self.w, " ")?;
-                for el in els {
-                    if let Body::Reg(r) = &el.body {
-                        write_reg(*r, self.w)?;
-                    }
-                    write!(self.w, ", ")?;
-                }
-                self.gen_addr(addr, incr)?;
-                writeln!(self.w)?;
+                self.gen_loadstore_tuple(els, addr, incr, if_state, "st")?;
             }
             _ => {
                 println!("{rhs:?}");
                 Err("store instructions only take registers")?;
             }
         }
+        Ok(())
+    }
+
+    fn gen_load_tuple(
+        &mut self,
+        els: &[Expr],
+        rhs: &Expr,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
+            self.gen_loadstore_tuple(els, addr, 0, if_state, "ld")
+        } else {
+            Err("tuple load must be from deref of address")?
+        }
+    }
+
+    fn gen_loadstore_tuple(
+        &mut self,
+        els: &[Expr],
+        addr: &Expr,
+        incr: i32,
+        if_state: &IfState,
+        op: &str,
+    ) -> Result<(), Error> {
+        // multiple store; can be either stm or strd
+        // try stm first (has a chance at 16 bit encoding)
+        // TODO: allow decrement also
+        let mut stm_ok =
+            matches!(addr.body, Body::Reg(_)) && (incr == 0 || incr == 4 * els.len() as i32);
+        let mut last_r = None;
+        for el in els {
+            let Body::Reg(r) = &el.body else {
+                return Err("tuple element for store must be register")?;
+            };
+            if let Some(last_r) = last_r
+                && r <= last_r
+            {
+                stm_ok = false;
+            }
+            last_r = Some(r);
+        }
+        if stm_ok {
+            self.start_insn(&format!("{op}m"), if_state)?;
+            write!(self.w, " ")?;
+            if let Body::Reg(addr_r) = &addr.body {
+                write_reg(*addr_r, self.w)?;
+            }
+            if incr != 0 {
+                write!(self.w, "!")?;
+            }
+            write!(self.w, ", {{")?;
+            let mut comma = false;
+            for el in els {
+                if comma {
+                    write!(self.w, ", ")?;
+                }
+                if let Body::Reg(r) = &el.body {
+                    write_reg(*r, self.w)?;
+                }
+                comma = true;
+            }
+            writeln!(self.w, "}}")?;
+            return Ok(());
+        }
+        // Now try strd
+        if els.len() != 2 {
+            Err("tuple store not eligible for stm, strd only does pairs")?;
+        }
+        self.start_insn(&format!("{op}rd"), if_state)?;
+        write!(self.w, " ")?;
+        for el in els {
+            if let Body::Reg(r) = &el.body {
+                write_reg(*r, self.w)?;
+            }
+            write!(self.w, ", ")?;
+        }
+        self.gen_addr(addr, incr)?;
+        writeln!(self.w)?;
         Ok(())
     }
 
@@ -392,6 +426,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 self.gen_addr(addr, incr)?;
                 writeln!(self.w)?;
                 Ok(())
+            } else if let Body::Tuple(els) = &lhs.body {
+                self.gen_loadstore_tuple(els, addr, incr, if_state, "ld")
             } else {
                 Err("load must assign to register")?
             }
