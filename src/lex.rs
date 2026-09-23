@@ -130,7 +130,22 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     tokens.push(Token::new(loc, TokBody::Asterisk));
                 }
             }
-            '/' => tokens.push(Token::new(loc, TokBody::Slash)),
+            '/' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'/') {
+                    // comment
+                    let mut end = ix + len;
+                    while end < src.len() {
+                        if src.as_bytes()[end] == b'\n' {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    ix = end;
+                    continue;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Slash));
+                }
+            }
             '@' => tokens.push(Token::new(loc, TokBody::At)),
             '#' => tokens.push(Token::new(loc, TokBody::Octothorpe)),
             '&' => tokens.push(Token::new(loc, TokBody::Ampersand)),

@@ -38,8 +38,9 @@ loop:
     bx lr
 }
 
+// comment
 fn tuples(p: *u32) {
-    val @r1 = 1
+    val @r1 = 1 // also comment
     val2 @r2 = 2
     *p = (val, val2); p += 8
     *p = (val, val2)
