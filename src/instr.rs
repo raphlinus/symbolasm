@@ -54,7 +54,7 @@ impl Cpu {
             let rrm = self.regs.r[rm];
             let rrn = self.regs.r[rdn];
             let val = match op {
-                0 => rrn & rrm,  // EORS
+                0 => rrn & rrm,  // ANDS
                 1 => rrn ^ rrm,  // EORS
                 12 => rrn | rrm, // ORRS
                 _ => todo!(),
@@ -130,7 +130,7 @@ impl Cpu {
         if inst & 0x800 == 0 {
             // ADR (T1 encoding)
             let imm = (inst & 0xff) << 2;
-            let align_pc = (self.regs.r[15] + 2) & !4;
+            let align_pc = (self.regs.r[15] + 2) & !3;
             let rd = (inst & 0x700) >> 8;
             self.regs.r[rd as usize] = align_pc.wrapping_add(imm as u32);
         } else {

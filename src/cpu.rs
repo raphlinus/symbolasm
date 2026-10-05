@@ -51,12 +51,12 @@ impl Cpu {
 
     fn pop(&mut self) -> u32 {
         let result = self.load_u32(self.regs.r[13]);
-        self.regs.r[13] += 2;
+        self.regs.r[13] += 4;
         result
     }
 
     fn push(&mut self, val: u32) {
-        self.regs.r[13] -= 2;
+        self.regs.r[13] -= 4;
         self.store_u32(self.regs.r[13], val);
     }
 
