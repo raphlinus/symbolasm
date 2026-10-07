@@ -4,10 +4,10 @@
 use std::{collections::HashMap, io::Write};
 
 use crate::{
+    error::{Error, WithLoc},
     generate::GenCtx,
     ifthen,
     ir::IrCtx,
-    lex::{Error, WithLoc},
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},

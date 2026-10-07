@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    lex::{Error, TokBody},
+    error::Error,
+    lex::TokBody,
     parse::{self, Function},
     stmt::Stmt,
     svd::Peripherals,

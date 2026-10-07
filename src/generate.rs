@@ -9,9 +9,10 @@
 use std::{io::Write, ops::Deref};
 
 use crate::{
+    error::Error,
     ifthen::IfState,
     ir::{Assign, BinOp, Body, Expr, Ir, UnaryOp},
-    lex::{Error, TokBody, Token},
+    lex::{TokBody, Token},
     regmap::{Regmap, parse_register},
     stmt::Stmt,
     types::{Type, TypeHandle, TypePool},

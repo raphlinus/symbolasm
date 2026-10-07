@@ -3,6 +3,8 @@
 
 //! Tokenizer
 
+use crate::error::{Error, WithLoc};
+
 /// Location in source file. Will expand to identify multiple files.
 #[derive(Clone, Debug)]
 pub struct Loc {
@@ -49,46 +51,6 @@ pub enum TokBody {
     LessLess,
     Greater,
     GreaterGreater,
-}
-
-pub type Error = Box<dyn std::error::Error>;
-
-/// An error fattened with the source location where it occurred.
-///
-/// Most code returns plain errors; locations are attached at the points that
-/// iterate over statements and items.
-#[derive(Debug)]
-pub struct LocError {
-    pub loc: Loc,
-    pub err: Error,
-}
-
-impl std::fmt::Display for LocError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.err.fmt(f)
-    }
-}
-
-impl std::error::Error for LocError {}
-
-pub trait WithLoc<T> {
-    /// Attach a location, unless the error already has a more precise one.
-    fn at(self, loc: &Loc) -> Result<T, Error>;
-}
-
-impl<T> WithLoc<T> for Result<T, Error> {
-    fn at(self, loc: &Loc) -> Result<T, Error> {
-        self.map_err(|err| {
-            if err.is::<LocError>() {
-                err
-            } else {
-                Box::new(LocError {
-                    loc: loc.clone(),
-                    err,
-                }) as Error
-            }
-        })
-    }
 }
 
 #[derive(Clone, Debug)]

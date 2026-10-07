@@ -7,7 +7,8 @@ use crate::regmap::parse_register;
 use crate::svd::Peripherals;
 use crate::typeinf::TypeMap;
 use crate::{
-    lex::{Error, TokBody},
+    error::Error,
+    lex::TokBody,
     regmap::Regmap,
     stmt::Stmt,
     types::{Type, TypeHandle, TypePool},

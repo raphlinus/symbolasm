@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use roxml::{BodyNode, XmlElement, XmlReader};
 
 use crate::{
-    lex::Error,
+    error::Error,
     types::{StructField, Type, TypeHandle, TypePool},
 };
 

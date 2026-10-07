@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::lex::{Error, WithLoc};
+use crate::error::{Error, WithLoc};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TypeHandle(usize);

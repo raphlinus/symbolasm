@@ -4,7 +4,8 @@
 //! Parsing
 
 use crate::{
-    lex::{Error, Loc, TokBody, TokBuf, Token, WithLoc},
+    error::{Error, WithLoc},
+    lex::{Loc, TokBody, TokBuf, Token},
     precedence::Precedence,
     stmt::{Insn, Stmt},
 };

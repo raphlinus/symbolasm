@@ -7,13 +7,15 @@ use clap::Parser;
 
 use crate::{
     compile::FnScope,
-    lex::{Error, LocError, WithLoc, tokenize},
+    error::{Error, WithLoc, report_error},
+    lex::tokenize,
     parse::parse_program,
     types::TypePool,
 };
 
 mod bitset;
 mod compile;
+mod error;
 mod generate;
 mod ifthen;
 mod ir;
@@ -89,20 +91,4 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-/// Print an error, with line, column and the source line if it has a location.
-fn report_error(path: &str, src: &str, err: &(dyn std::error::Error + 'static)) {
-    let Some(loc_err) = err.downcast_ref::<LocError>() else {
-        eprintln!("error: {err}");
-        return;
-    };
-    let offset = loc_err.loc.offset.min(src.len());
-    let line_start = src[..offset].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = src[offset..].find('\n').map_or(src.len(), |i| offset + i);
-    let line = src[..offset].matches('\n').count() + 1;
-    let col = src[line_start..offset].chars().count() + 1;
-    eprintln!("{path}:{line}:{col}: error: {}", loc_err.err);
-    eprintln!("{:>5} | {}", line, &src[line_start..line_end]);
-    eprintln!("      | {:>col$}", "^");
 }
