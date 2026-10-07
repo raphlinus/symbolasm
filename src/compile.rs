@@ -107,7 +107,10 @@ impl FnScope {
     }
 
     fn propagate_regmaps(&mut self) {
-        let mut queue = vec![0];
+        // Every block needs at least one visit; a block whose first
+        // intersection changes nothing would otherwise never pass its
+        // placements on to its successors.
+        let mut queue: Vec<usize> = (0..self.basic_blocks.len()).rev().collect();
         while let Some(node) = queue.pop() {
             let n_succ = self.basic_blocks[node].succ.len();
             for i in 0..n_succ {
