@@ -15,3 +15,13 @@ fn rename(a) {
     zero += 1
     bx lr
 }
+
+fn rename_in_it(a) {
+    #(a - 1)
+    if #eq {
+        a = a
+    } else {
+        a = 2
+    }
+    bx lr
+}

@@ -18,3 +18,12 @@ rename:
     sub r2, r2, #1
     add r2, r2, #1
     bx lr
+.section .text
+.global rename_in_it
+.thumb_func
+rename_in_it:
+    cmp r0, #1
+    ite eq
+    moveq r0, r0
+    movne r0, #2
+    bx lr

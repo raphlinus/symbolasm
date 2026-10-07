@@ -104,7 +104,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
     ) -> Result<(), Error> {
         match &rhs.body {
             // A move to the same register only renames, so emits nothing.
-            Body::Reg(r) if *r == lhs && with_flags != WithFlags::Yes => (),
+            // Inside an IT block it is kept, since the block's instruction
+            // count was computed per statement.
+            Body::Reg(r)
+                if *r == lhs
+                    && with_flags != WithFlags::Yes
+                    && matches!(if_state, IfState::Default) => {}
             Body::Reg(r) => {
                 self.start_insn_flags("mov", with_flags, if_state)?;
                 write!(self.w, " ")?;
