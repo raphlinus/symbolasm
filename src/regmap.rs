@@ -78,6 +78,15 @@ impl Regmap {
                 self.apply_assign(lhs)
             }
             Stmt::WithAddrUpdate(stmt, _lhs, _sign, _incr) => self.apply(stmt),
+            Stmt::Insn(Insn::Pop(regs)) => {
+                for r in regs {
+                    if let Some(id) = r.as_ident()
+                        && let Some(n) = parse_register(id)
+                    {
+                        self.kill(n);
+                    }
+                }
+            }
             Stmt::Insn(Insn::Bl(_)) => {
                 // By ABI convention
                 for r in [0, 1, 2, 3, 12, 14] {

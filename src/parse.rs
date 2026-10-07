@@ -263,6 +263,14 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                     let rhs = parse_expr(toks)?;
                     let stmt = Stmt::Assign(lhs, op.clone(), rhs);
                     addr_update_helper(toks, stmt)
+                } else if let Expr::Call(name, args) = lhs {
+                    // Instructions written as function calls, without a result
+                    toks.expect(&TokBody::Newline)?;
+                    match name.as_ident().unwrap() {
+                        "push" => Ok(Stmt::Insn(Insn::Push(args))),
+                        "pop" => Ok(Stmt::Insn(Insn::Pop(args))),
+                        n => Err(format!("unknown instruction {n}"))?,
+                    }
                 } else {
                     Err("unhandled syntax")?
                 }

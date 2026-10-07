@@ -1,0 +1,4 @@
+// error: push registers must be in ascending order
+fn f() {
+    push(lr, r4)
+}

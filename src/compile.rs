@@ -227,6 +227,10 @@ fn analyze_branch(stmt: &Stmt) -> (BranchKind, Option<&str>) {
             Insn::Bl(label) => (BranchKind::FunctionCall, Some(label)),
             Insn::Cbz(_, label) => (BranchKind::CondBranch, Some(label)),
             Insn::Cbnz(_, label) => (BranchKind::CondBranch, Some(label)),
+            Insn::Pop(regs) if regs.iter().any(|r| r.as_ident() == Some("pc")) => {
+                (BranchKind::UncondBranch, None)
+            }
+            Insn::Push(_) | Insn::Pop(_) => (BranchKind::NotBranch, None),
         }
     } else {
         (BranchKind::NotBranch, None)

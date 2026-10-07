@@ -1,0 +1,17 @@
+// push/pop, and moves to the same register being elided.
+
+fn calls_out(a) {
+    push(r4, lr)
+    saved @r4 = a
+    bl elsewhere
+    r0 = saved
+    pop(r4, pc)
+}
+
+fn rename(a) {
+    count @r2 = a
+    count -= 1
+    zero @r2 = count // elided
+    zero += 1
+    bx lr
+}

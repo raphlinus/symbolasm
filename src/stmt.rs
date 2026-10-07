@@ -25,4 +25,6 @@ pub enum Insn {
     Bl(String),
     Cbz(Expr, String),
     Cbnz(Expr, String),
+    Push(Vec<Expr>),
+    Pop(Vec<Expr>),
 }

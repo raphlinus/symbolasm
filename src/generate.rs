@@ -103,6 +103,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
         if_state: &IfState,
     ) -> Result<(), Error> {
         match &rhs.body {
+            // A move to the same register only renames, so emits nothing.
+            Body::Reg(r) if *r == lhs && with_flags != WithFlags::Yes => (),
             Body::Reg(r) => {
                 self.start_insn_flags("mov", with_flags, if_state)?;
                 write!(self.w, " ")?;
@@ -620,6 +622,10 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     self.start_insn("b", if_state)?;
                     writeln!(self.w, " {target}")?;
                 }
+                crate::stmt::Insn::Push(regs) => {
+                    self.gen_reglist("push", regs, regmap, if_state)?
+                }
+                crate::stmt::Insn::Pop(regs) => self.gen_reglist("pop", regs, regmap, if_state)?,
                 crate::stmt::Insn::Bl(target) => {
                     self.start_insn("bl", if_state)?;
                     writeln!(self.w, " {target}")?;
@@ -654,6 +660,41 @@ impl<'a, W: Write> GenCtx<'a, W> {
             Stmt::Else | Stmt::EndBlock => (),
             _ => todo!("nyi"),
         }
+        Ok(())
+    }
+
+    fn gen_reglist(
+        &mut self,
+        insn: &str,
+        regs: &[crate::parse::Expr],
+        regmap: &Regmap,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        let mut nums = vec![];
+        for r in regs {
+            let id = r
+                .as_ident()
+                .ok_or(format!("{insn} arguments must be registers"))?;
+            let n = parse_register(id)
+                .or_else(|| regmap.lookup(id))
+                .ok_or(format!("no place for {id}"))?;
+            if nums.last().is_some_and(|&last| n <= last) {
+                Err(format!("{insn} registers must be in ascending order"))?;
+            }
+            nums.push(n);
+        }
+        if nums.is_empty() {
+            Err(format!("{insn} needs at least one register"))?;
+        }
+        self.start_insn(insn, if_state)?;
+        write!(self.w, " {{")?;
+        for (i, n) in nums.iter().enumerate() {
+            if i > 0 {
+                write!(self.w, ", ")?;
+            }
+            write_reg(*n, self.w)?;
+        }
+        writeln!(self.w, "}}")?;
         Ok(())
     }
 
