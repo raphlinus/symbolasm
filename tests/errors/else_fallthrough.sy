@@ -1,0 +1,8 @@
+// error: then part falls through into else
+fn f(x) {
+    if {
+        x = 1
+    } else {
+        x = 2
+    }
+}

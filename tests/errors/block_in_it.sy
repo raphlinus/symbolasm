@@ -1,0 +1,8 @@
+// error: blocks are not allowed inside if #cc { }
+fn f(x) {
+    #(x - 1)
+    if #eq {
+        loop {
+        }
+    }
+}

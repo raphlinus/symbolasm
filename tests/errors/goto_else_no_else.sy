@@ -1,0 +1,6 @@
+// error: goto else in a block with no else
+fn f(x) {
+    if {
+        if #eq goto else
+    }
+}

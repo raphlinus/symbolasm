@@ -1,0 +1,5 @@
+// error: unknown condition #nz
+fn f(x) {
+    if #nz goto out
+out:
+}

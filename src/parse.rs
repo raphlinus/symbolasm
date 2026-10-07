@@ -122,7 +122,7 @@ fn parse_function(toks: &mut TokBuf) -> Result<Function, Error> {
     }
     let name = name.clone();
     let args = parse_args(toks).at(&name.loc)?;
-    let (body, locs) = parse_body(toks)?;
+    let (body, locs) = parse_body(toks, name.as_ident().unwrap())?;
     Ok(Function {
         name,
         args,
@@ -173,29 +173,188 @@ fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
     }
 }
 
-fn parse_body(toks: &mut TokBuf) -> Result<(Vec<Stmt>, Vec<Loc>), Error> {
+/// A block open while parsing a function body.
+enum OpenBlock {
+    /// `if #cc { }`, compiled to an IT block
+    It,
+    /// `if { }` or `loop { }`, which only scope the labels `loop`, `else`
+    /// and `end`
+    Labels {
+        id: usize,
+        has_else: bool,
+        uses_else: bool,
+    },
+}
+
+fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>), Error> {
     let mut stmts = vec![];
     let mut locs = vec![];
     toks.expect(&TokBody::OpenBrace)?;
     toks.expect(&TokBody::Newline)?;
-    let mut depth = 0;
+    let mut blocks: Vec<OpenBlock> = vec![];
+    let mut n_label_blocks = 0;
+    let block_label = |id: usize, which: &str| format!(".L{fn_name}_{id}_{which}");
     loop {
         toks.eat_newlines();
-        if depth == 0 && toks.expect_opt(&TokBody::CloseBrace) {
+        if blocks.is_empty() && toks.expect_opt(&TokBody::CloseBrace) {
             break;
         }
-        let loc = toks
-            .peek()
-            .ok_or("unexpected eof in function body")?
-            .loc
-            .clone();
-        stmts.push(parse_stmt(toks, &mut depth).at(&loc)?);
+        let tok = toks.peek().ok_or("unexpected eof in function body")?;
+        let loc = tok.loc.clone();
+        // `if {` and `loop {` open a label block
+        let opens_label_block = (tok.match_str("if") || tok.match_str("loop"))
+            && toks.tokens.get(toks.ix + 1).map(|t| &t.tok) == Some(&TokBody::OpenBrace);
+        if opens_label_block {
+            if let Some(OpenBlock::It) = blocks.last() {
+                return Err("blocks are not allowed inside if #cc { }".into()).at(&loc);
+            }
+            toks.next();
+            toks.next();
+            toks.expect(&TokBody::Newline)?;
+            let id = n_label_blocks;
+            n_label_blocks += 1;
+            blocks.push(OpenBlock::Labels {
+                id,
+                has_else: false,
+                uses_else: false,
+            });
+            stmts.push(Stmt::Label(block_label(id, "loop")));
+            locs.push(loc);
+            continue;
+        }
+        let mut stmt = parse_stmt(toks).at(&loc)?;
+        match (&stmt, blocks.last_mut()) {
+            (Stmt::StartIf(_), _) => blocks.push(OpenBlock::It),
+            (Stmt::Else | Stmt::EndBlock, None) => {
+                return Err("unmatched close brace".into()).at(&loc);
+            }
+            (Stmt::Else | Stmt::EndBlock, Some(OpenBlock::It)) => {
+                if let Stmt::EndBlock = stmt {
+                    blocks.pop();
+                }
+            }
+            (Stmt::Else, Some(OpenBlock::Labels { id, has_else, .. })) => {
+                if *has_else {
+                    return Err("block already has an else".into()).at(&loc);
+                }
+                // One statement is one instruction, so no branch is
+                // inserted; the then part must end with one.
+                if !stmts.last().is_some_and(is_unconditional_branch) {
+                    return Err("then part falls through into else; end it with goto end".into())
+                        .at(&loc);
+                }
+                *has_else = true;
+                stmt = Stmt::Label(block_label(*id, "else"));
+            }
+            (Stmt::EndBlock, Some(OpenBlock::Labels { id, .. })) => {
+                let id = *id;
+                let Some(OpenBlock::Labels {
+                    has_else,
+                    uses_else,
+                    ..
+                }) = blocks.pop()
+                else {
+                    unreachable!()
+                };
+                if uses_else && !has_else {
+                    return Err("goto else in a block with no else".into()).at(&loc);
+                }
+                stmt = Stmt::Label(block_label(id, "end"));
+            }
+            (Stmt::Insn(_), _) => {
+                // `loop`, `else` and `end` refer to the innermost label block
+                let innermost = blocks.iter_mut().rev().find_map(|b| match b {
+                    OpenBlock::Labels { id, uses_else, .. } => Some((*id, uses_else)),
+                    OpenBlock::It => None,
+                });
+                if let Some((id, uses_else)) = innermost
+                    && let Some(label) = branch_target_mut(&mut stmt)
+                    && matches!(label.as_str(), "loop" | "else" | "end")
+                {
+                    if label == "else" {
+                        *uses_else = true;
+                    }
+                    *label = block_label(id, label);
+                }
+            }
+            _ => (),
+        }
+        stmts.push(stmt);
         locs.push(loc);
     }
     Ok((stmts, locs))
 }
 
-fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
+fn is_unconditional_branch(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Insn(Insn::B(_) | Insn::Bx(_)) => true,
+        Stmt::Insn(Insn::Pop(regs)) => regs.iter().any(|r| r.as_ident() == Some("pc")),
+        _ => false,
+    }
+}
+
+fn branch_target_mut(stmt: &mut Stmt) -> Option<&mut String> {
+    match stmt {
+        Stmt::Insn(
+            Insn::B(label) | Insn::BCond(_, label) | Insn::Cbz(_, label) | Insn::Cbnz(_, label),
+        ) => Some(label),
+        _ => None,
+    }
+}
+
+fn parse_label(toks: &mut TokBuf) -> Result<String, Error> {
+    let dst = toks.next().ok_or("expected label")?;
+    let TokBody::Identifier(label) = dst.tok.clone() else {
+        return Err("branch target must be identifier")?;
+    };
+    Ok(label)
+}
+
+const CONDS: &[&str] = &[
+    "eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le",
+];
+
+// Note: "if" has already been consumed, and it isn't `if {`
+fn parse_if(toks: &mut TokBuf) -> Result<Stmt, Error> {
+    if toks.expect_opt(&TokBody::Octothorpe) {
+        let cond = toks.next().ok_or("unexpected eof in if stmt")?.clone();
+        if toks.expect_opt(&TokBody::OpenBrace) {
+            toks.expect(&TokBody::Newline)?;
+            return Ok(Stmt::StartIf(cond));
+        }
+        let name = cond.as_ident().ok_or("expected condition after #")?;
+        if !CONDS.contains(&name) {
+            Err(format!("unknown condition #{name}"))?;
+        }
+        if !toks.peek().is_some_and(|t| t.match_str("goto")) {
+            Err("expected { or goto after condition")?;
+        }
+        toks.next();
+        let label = parse_label(toks)?;
+        toks.expect(&TokBody::Newline)?;
+        return Ok(Stmt::Insn(Insn::BCond(name.to_owned(), label)));
+    }
+    // `if x == 0 goto label` (cbz) and `if x != 0 goto label` (cbnz)
+    let reg = parse_expr(toks)?;
+    let op = toks.next().ok_or("unexpected eof in if stmt")?.tok.clone();
+    let zero = toks.next().ok_or("unexpected eof in if stmt")?;
+    if zero.tok != TokBody::Number(0) {
+        Err("only comparison with 0 is supported (cbz/cbnz)")?;
+    }
+    if !toks.peek().is_some_and(|t| t.match_str("goto")) {
+        Err("expected goto")?;
+    }
+    toks.next();
+    let label = parse_label(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    match op {
+        TokBody::EqualsEquals => Ok(Stmt::Insn(Insn::Cbz(reg, label))),
+        TokBody::ExclamationEquals => Ok(Stmt::Insn(Insn::Cbnz(reg, label))),
+        _ => Err("expected == or != in if")?,
+    }
+}
+
+fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
     let first = toks.next().ok_or("unexpected eof in stmt")?.clone();
     match first.tok {
         TokBody::Identifier(ident) => {
@@ -256,13 +415,11 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                         _ => unreachable!(),
                     });
                 }
-                "if" => {
-                    toks.expect(&TokBody::Octothorpe)?;
-                    let cond = toks.next().ok_or("unexpected eof in if stmt")?.clone();
-                    toks.expect(&TokBody::OpenBrace)?;
+                "if" => return parse_if(toks),
+                "goto" => {
+                    let label = parse_label(toks)?;
                     toks.expect(&TokBody::Newline)?;
-                    *depth += 1;
-                    return Ok(Stmt::StartIf(cond));
+                    return Ok(Stmt::Insn(Insn::B(label)));
                 }
                 _ => (),
             }
@@ -313,10 +470,7 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
         TokBody::CloseBrace => {
             let tok = toks.next().ok_or("unexpected eof after close brace")?;
             match &tok.tok {
-                TokBody::Newline => {
-                    *depth -= 1;
-                    Ok(Stmt::EndBlock)
-                }
+                TokBody::Newline => Ok(Stmt::EndBlock),
                 TokBody::Identifier(id) => {
                     if id != "else" {
                         Err("unexpected identifier after close brace")?

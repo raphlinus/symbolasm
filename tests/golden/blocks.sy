@@ -1,0 +1,55 @@
+// Label blocks and goto forms.
+
+fn count_down(n) {
+    loop {
+        #(n -= 1)
+        if #ne goto loop
+    }
+    bx lr
+}
+
+fn nested(n) {
+    loop {
+        d @r1 = 10
+        loop {
+            #(d -= 1)
+            if #ne goto loop
+        }
+        #(n -= 1)
+        if #hs goto loop
+    }
+    bx lr
+}
+
+fn choose(x) {
+    #(x - 3)
+    if {
+        if #lo goto else
+        x = 1
+        goto end
+    } else {
+        x = 2
+    }
+    bx lr
+}
+
+fn skip(p: *u32) {
+    if {
+        if p == 0 goto end
+        v @r1 = *p
+        if v != 0 goto end
+        *p = p
+    }
+    bx lr
+}
+
+fn with_it(x) {
+    loop {
+        #(x - 5)
+        if #hi {
+            x = 5
+        }
+        if #hi goto loop
+    }
+    bx lr
+}

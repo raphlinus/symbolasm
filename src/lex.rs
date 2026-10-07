@@ -37,6 +37,8 @@ pub enum TokBody {
     Minus,
     Slash,
     Equals,
+    EqualsEquals,
+    ExclamationEquals,
     Colon,
     PlusEquals,
     MinusEquals,
@@ -112,7 +114,14 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 }
             }
             ';' => tokens.push(Token::new(loc, TokBody::Semicolon)),
-            '=' => tokens.push(Token::new(loc, TokBody::Equals)),
+            '=' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'=') {
+                    tokens.push(Token::new(loc, TokBody::EqualsEquals));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Equals));
+                }
+            }
             ':' => tokens.push(Token::new(loc, TokBody::Colon)),
             '+' => {
                 if src.as_bytes().get(ix + 1) == Some(&b'=') {
@@ -169,7 +178,14 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 len += has_eq as usize;
                 tokens.push(Token::new(loc, tok));
             }
-            '!' => tokens.push(Token::new(loc, TokBody::Exclamation)),
+            '!' => {
+                if src.as_bytes().get(ix + 1) == Some(&b'=') {
+                    tokens.push(Token::new(loc, TokBody::ExclamationEquals));
+                    len += 1;
+                } else {
+                    tokens.push(Token::new(loc, TokBody::Exclamation));
+                }
+            }
             '<' => {
                 if src.as_bytes().get(ix + 1) == Some(&b'<') {
                     if src.as_bytes().get(ix + 2) == Some(&b'=') {

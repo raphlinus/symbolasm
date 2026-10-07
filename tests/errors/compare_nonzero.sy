@@ -1,0 +1,5 @@
+// error: only comparison with 0 is supported
+fn f(x) {
+    if x == 5 goto out
+out:
+}

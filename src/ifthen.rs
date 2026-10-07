@@ -104,8 +104,8 @@ impl Cond {
         match s {
             "eq" => Some(Cond::Eq),
             "ne" => Some(Cond::Ne),
-            "cs" => Some(Cond::Cs),
-            "cc" => Some(Cond::Cc),
+            "cs" | "hs" => Some(Cond::Cs),
+            "cc" | "lo" => Some(Cond::Cc),
             "mi" => Some(Cond::Mi),
             "pl" => Some(Cond::Pl),
             "vs" => Some(Cond::Vs),
