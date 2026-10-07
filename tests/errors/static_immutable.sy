@@ -1,0 +1,2 @@
+// error: only `static mut name: type`
+static dvi: u32

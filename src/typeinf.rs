@@ -122,6 +122,10 @@ impl<'a> TypeInferCtx<'a> {
                     }
                 }),
                 TokBody::Minus | TokBody::Exclamation => self.try_get_type(expr),
+                TokBody::Ampersand => {
+                    let target = expr.as_ident().and_then(|id| self.globals.static_ty(id))?;
+                    Some(self.types.get_handle(&Type::Ptr(target)))
+                }
                 _ => None,
             },
             parse::Expr::Cast(_expr, ty) => self.types.intern_from_ast(ty).ok(),

@@ -41,6 +41,11 @@ pub enum TokBody {
     PlusEquals,
     MinusEquals,
     AsteriskEquals,
+    AmpersandEquals,
+    PipeEquals,
+    CaretEquals,
+    LessLessEquals,
+    GreaterGreaterEquals,
     At,
     Octothorpe,
     Ampersand,
@@ -151,22 +156,42 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
             }
             '@' => tokens.push(Token::new(loc, TokBody::At)),
             '#' => tokens.push(Token::new(loc, TokBody::Octothorpe)),
-            '&' => tokens.push(Token::new(loc, TokBody::Ampersand)),
-            '|' => tokens.push(Token::new(loc, TokBody::Pipe)),
-            '^' => tokens.push(Token::new(loc, TokBody::Caret)),
+            '&' | '|' | '^' => {
+                let has_eq = src.as_bytes().get(ix + 1) == Some(&b'=');
+                let tok = match (c, has_eq) {
+                    ('&', false) => TokBody::Ampersand,
+                    ('&', true) => TokBody::AmpersandEquals,
+                    ('|', false) => TokBody::Pipe,
+                    ('|', true) => TokBody::PipeEquals,
+                    ('^', false) => TokBody::Caret,
+                    _ => TokBody::CaretEquals,
+                };
+                len += has_eq as usize;
+                tokens.push(Token::new(loc, tok));
+            }
             '!' => tokens.push(Token::new(loc, TokBody::Exclamation)),
             '<' => {
                 if src.as_bytes().get(ix + 1) == Some(&b'<') {
-                    tokens.push(Token::new(loc, TokBody::LessLess));
-                    len += 1;
+                    if src.as_bytes().get(ix + 2) == Some(&b'=') {
+                        tokens.push(Token::new(loc, TokBody::LessLessEquals));
+                        len += 2;
+                    } else {
+                        tokens.push(Token::new(loc, TokBody::LessLess));
+                        len += 1;
+                    }
                 } else {
                     tokens.push(Token::new(loc, TokBody::Less));
                 }
             }
             '>' => {
                 if src.as_bytes().get(ix + 1) == Some(&b'>') {
-                    tokens.push(Token::new(loc, TokBody::GreaterGreater));
-                    len += 1;
+                    if src.as_bytes().get(ix + 2) == Some(&b'=') {
+                        tokens.push(Token::new(loc, TokBody::GreaterGreaterEquals));
+                        len += 2;
+                    } else {
+                        tokens.push(Token::new(loc, TokBody::GreaterGreater));
+                        len += 1;
+                    }
                 } else {
                     tokens.push(Token::new(loc, TokBody::Greater));
                 }
@@ -235,7 +260,15 @@ impl TokBody {
     pub fn is_assign_op(&self) -> bool {
         matches!(
             self,
-            TokBody::Equals | TokBody::PlusEquals | TokBody::MinusEquals | TokBody::AsteriskEquals
+            TokBody::Equals
+                | TokBody::PlusEquals
+                | TokBody::MinusEquals
+                | TokBody::AsteriskEquals
+                | TokBody::AmpersandEquals
+                | TokBody::PipeEquals
+                | TokBody::CaretEquals
+                | TokBody::LessLessEquals
+                | TokBody::GreaterGreaterEquals
         )
     }
 }

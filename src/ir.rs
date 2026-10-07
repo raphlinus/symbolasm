@@ -108,6 +108,11 @@ impl BinOp {
         Some(match tok {
             TokBody::PlusEquals => BinOp::Add,
             TokBody::AsteriskEquals => BinOp::Mul,
+            TokBody::AmpersandEquals => BinOp::And,
+            TokBody::PipeEquals => BinOp::Orr,
+            TokBody::CaretEquals => BinOp::Eor,
+            TokBody::LessLessEquals => BinOp::Shl,
+            TokBody::GreaterGreaterEquals => BinOp::Shr,
             TokBody::MinusEquals => BinOp::Sub,
             _ => return None,
         })
@@ -123,6 +128,22 @@ impl UnaryOp {
             _ => return None,
         })
     }
+}
+
+/// Constant folding of an operation on two literals, with 32 bit wrapping
+/// unsigned semantics.
+fn fold_binop(a: u32, op: BinOp, b: u32) -> Result<u32, Error> {
+    Ok(match op {
+        BinOp::Add => a.wrapping_add(b),
+        BinOp::Sub => a.wrapping_sub(b),
+        BinOp::Mul => a.wrapping_mul(b),
+        BinOp::Div => a.checked_div(b).ok_or("division by zero in constant")?,
+        BinOp::And => a & b,
+        BinOp::Orr => a | b,
+        BinOp::Eor => a ^ b,
+        BinOp::Shl => a.checked_shl(b).ok_or("shift out of range in constant")?,
+        BinOp::Shr => a.checked_shr(b).ok_or("shift out of range in constant")?,
+    })
 }
 
 impl<'a> IrCtx<'a> {
@@ -204,6 +225,8 @@ impl<'a> IrCtx<'a> {
                 } else if self.globals.symbol_ty(id).is_some() {
                     let body = Body::Sym(id.to_owned());
                     return Ok(Expr { ty, body });
+                } else if self.globals.static_ty(id).is_some() {
+                    return Err(format!("static mut {id} can only be used as &{id}"))?;
                 } else {
                     return Err(format!("variable {id} not found"))?;
                 };
@@ -238,10 +261,26 @@ impl<'a> IrCtx<'a> {
                     let lhs = self.lower_expr(lhs)?;
                     let rhs = self.lower_expr(rhs)?;
                     let op = BinOp::from_tok(&op.tok).ok_or("unknown binop")?;
+                    if let (Body::Imm(a), Body::Imm(b)) = (&lhs.body, &rhs.body) {
+                        let body = Body::Imm(fold_binop(*a, op, *b)?);
+                        return Ok(Expr { ty: lhs.ty, body });
+                    }
                     let ty = lhs.ty;
                     let body = Body::Binop(lhs.into(), op, rhs.into());
                     Ok(Expr { ty, body })
                 }
+            }
+            parse::Expr::Unary(op, expr) if op.tok == TokBody::Ampersand => {
+                let Some(id) = expr.as_ident() else {
+                    return Err("& only applies to statics")?;
+                };
+                let target = self
+                    .globals
+                    .static_ty(id)
+                    .ok_or(format!("& only applies to statics, {id} is not one"))?;
+                let ty = self.types.get_handle(&Type::Ptr(target));
+                let body = Body::Sym(id.to_owned());
+                Ok(Expr { ty, body })
             }
             parse::Expr::Unary(op, expr) => {
                 let expr = self.lower_expr(expr)?;

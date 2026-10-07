@@ -85,6 +85,20 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
                 return Err(format!("duplicate symbol {name}").into()).at(&e.name.loc);
             }
         }
+        if let parse::Item::Static(s) = item {
+            let name = s.name.as_ident().unwrap();
+            let ty = types.intern_from_ast(&s.ty).at(&s.name.loc)?;
+            if globals.statics.insert(name.to_owned(), ty).is_some() {
+                return Err(format!("duplicate static {name}").into()).at(&s.name.loc);
+            }
+        }
+    }
+    if let Some(name) = globals
+        .statics
+        .keys()
+        .find(|n| globals.symbols.contains_key(*n))
+    {
+        return Err(format!("{name} is both a symbol and a static").into());
     }
 
     let w = &mut std::io::stdout();
@@ -100,6 +114,21 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
                 scope.gen_function(func, &mut types, &globals, w)?;
             }
             _ => (),
+        }
+    }
+
+    // Zero initialized statics, in source order
+    for item in &program.0 {
+        if let parse::Item::Static(s) = item {
+            let name = s.name.as_ident().unwrap();
+            let info = types.info(globals.statics[name]);
+            if info.size() == 0 {
+                return Err(format!("static {name} has zero size").into()).at(&s.name.loc);
+            }
+            writeln!(w, ".section .bss")?;
+            writeln!(w, ".balign {}", info.align())?;
+            writeln!(w, "{name}:")?;
+            writeln!(w, "    .space {}", info.size())?;
         }
     }
     Ok(())

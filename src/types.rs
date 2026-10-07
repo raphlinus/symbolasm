@@ -223,7 +223,6 @@ impl TypePool {
         }
     }
 
-    #[expect(unused)]
     pub fn info(&self, handle: TypeHandle) -> TypeInfo {
         self.info[handle.0]
     }
@@ -238,5 +237,13 @@ impl Type {
 impl TypeInfo {
     fn new(size: usize, align: usize) -> Self {
         TypeInfo { size, align }
+    }
+
+    pub fn size(self) -> usize {
+        self.size
+    }
+
+    pub fn align(self) -> usize {
+        self.align
     }
 }

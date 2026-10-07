@@ -1,0 +1,5 @@
+// error: static mut dvi can only be used as &dvi
+static mut dvi: u32
+fn f() {
+    x @r1 = dvi
+}

@@ -18,6 +18,15 @@ pub enum Item {
     Function(Function),
     Struct(Struct),
     Symbol(SymbolDecl),
+    Static(StaticDecl),
+}
+
+/// Data defined in this file. So far only `static mut name: type`, which is
+/// zero initialized and placed in .bss.
+#[derive(Debug)]
+pub struct StaticDecl {
+    pub name: Token,
+    pub ty: Type,
 }
 
 /// A symbol satisfied by the linker: `symbol name: type`.
@@ -92,11 +101,14 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
         } else if tok.match_str("struct") {
             let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
+        } else if tok.match_str("static") {
+            let s = parse_static(toks).at(&loc)?;
+            items.push(Item::Static(s));
         } else if tok.match_str("symbol") {
             let e = parse_symbol(toks).at(&loc)?;
             items.push(Item::Symbol(e));
         } else {
-            return Err("expected fn, struct or symbol".into()).at(&loc);
+            return Err("expected fn, struct, static or symbol".into()).at(&loc);
         }
     }
     Ok(Program(items))
@@ -361,7 +373,7 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
 fn parse_expr_unary(toks: &mut TokBuf) -> Result<Expr, Error> {
     let tok = toks.peek().ok_or("unexpected eof in expr")?;
     match tok.tok {
-        TokBody::Asterisk | TokBody::Minus | TokBody::Exclamation => {
+        TokBody::Asterisk | TokBody::Minus | TokBody::Exclamation | TokBody::Ampersand => {
             let first = toks.next().unwrap().clone();
             let expr = parse_expr_unary(toks)?;
             Ok(Expr::Unary(first, expr.into()))
@@ -449,6 +461,22 @@ fn parse_call_args(toks: &mut TokBuf) -> Result<Vec<Expr>, Error> {
         }
     }
     Ok(args)
+}
+
+// Note: "static" keyword has already been consumed
+fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
+    if !toks.peek().is_some_and(|t| t.match_str("mut")) {
+        Err("only `static mut name: type` (zero initialized) is supported so far")?
+    }
+    toks.next();
+    let name = toks.next().ok_or("expected static name")?.clone();
+    if !name.is_ident() {
+        Err("static name must be identifier")?
+    }
+    toks.expect(&TokBody::Colon)?;
+    let ty = parse_type(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    Ok(StaticDecl { name, ty })
 }
 
 // Note: "symbol" keyword has already been consumed
