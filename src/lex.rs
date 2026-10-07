@@ -6,7 +6,7 @@
 /// Location in source file. Will expand to identify multiple files.
 #[derive(Clone, Debug)]
 pub struct Loc {
-    offset: usize,
+    pub offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +52,44 @@ pub enum TokBody {
 }
 
 pub type Error = Box<dyn std::error::Error>;
+
+/// An error fattened with the source location where it occurred.
+///
+/// Most code returns plain errors; locations are attached at the points that
+/// iterate over statements and items.
+#[derive(Debug)]
+pub struct LocError {
+    pub loc: Loc,
+    pub err: Error,
+}
+
+impl std::fmt::Display for LocError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.err.fmt(f)
+    }
+}
+
+impl std::error::Error for LocError {}
+
+pub trait WithLoc<T> {
+    /// Attach a location, unless the error already has a more precise one.
+    fn at(self, loc: &Loc) -> Result<T, Error>;
+}
+
+impl<T> WithLoc<T> for Result<T, Error> {
+    fn at(self, loc: &Loc) -> Result<T, Error> {
+        self.map_err(|err| {
+            if err.is::<LocError>() {
+                err
+            } else {
+                Box::new(LocError {
+                    loc: loc.clone(),
+                    err,
+                }) as Error
+            }
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TokBuf {
@@ -205,7 +243,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     if c1.is_ascii_digit() {
                         val = (val * 10) + (c1 - b'0') as i64;
                     } else if c1.is_ascii_alphabetic() {
-                        Err("trailing alphabetic in number")?;
+                        return Err("trailing alphabetic in number".into()).at(&loc);
                     } else if c1 != b'_' {
                         break;
                     }
@@ -215,7 +253,7 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 ix = end;
                 continue;
             }
-            _ => Err(format!("unknown char {c}"))?,
+            _ => return Err(format!("unknown char {c}").into()).at(&loc),
         }
         ix += len;
     }
@@ -261,7 +299,8 @@ impl TokBuf {
     pub fn expect(&mut self, expected: &TokBody) -> Result<(), Error> {
         if let Some(tok) = self.peek() {
             if tok.tok != *expected {
-                return Err(format!("expected {expected:?} got {tok:?}").into());
+                let err = format!("expected {expected:?}, got {:?}", tok.tok);
+                return Err(err.into()).at(&tok.loc);
             }
             self.ix += 1;
             Ok(())

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::lex::Error;
+use crate::lex::{Error, WithLoc};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TypeHandle(usize);
@@ -95,7 +95,7 @@ impl TypePool {
                         if let Some(ty) = self.globals.get(ty_name) {
                             return Ok(*ty);
                         } else {
-                            Err("unknown type")?
+                            Err(format!("unknown type {ty_name}"))?
                         }
                     }
                 };
@@ -134,10 +134,11 @@ impl TypePool {
         let mut align = 1;
         for field in &s.fields {
             let name = field.name.as_ident().unwrap().to_string();
-            let ty = self.intern_from_ast(&field.ty)?;
+            let ty = self.intern_from_ast(&field.ty).at(&field.name.loc)?;
             let field_info = self.info[ty.0];
             if field_info.align == 0 {
-                Err("recursive struct (or maybe just not topologically sorted")?
+                return Err("recursive struct (or maybe just not topologically sorted)".into())
+                    .at(&field.name.loc);
             }
             let align_mask = field_info.align - 1;
             offset = (offset + align_mask) & !align_mask;

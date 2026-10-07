@@ -4,7 +4,7 @@
 //! Parsing
 
 use crate::{
-    lex::{Error, TokBody, TokBuf, Token},
+    lex::{Error, Loc, TokBody, TokBuf, Token, WithLoc},
     precedence::Precedence,
     stmt::{Insn, Stmt},
 };
@@ -23,6 +23,8 @@ pub struct Function {
     pub name: Token,
     pub args: Args,
     pub body: Vec<Stmt>,
+    /// Location of the first token of each statement, parallel to `body`.
+    pub locs: Vec<Loc>,
 }
 
 #[derive(Debug)]
@@ -70,24 +72,35 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
         if tok.tok == TokBody::Newline {
             continue;
         }
+        let loc = tok.loc.clone();
         if tok.match_str("fn") {
-            let name = toks.next().ok_or("expected function name")?;
-            if !name.is_ident() {
-                Err("function name must be identifier")?
-            }
-            let name = name.clone();
-            let args = parse_args(toks)?;
-            let body = parse_body(toks)?;
-            let f = Function { name, args, body };
+            let f = parse_function(toks).at(&loc)?;
             items.push(Item::Function(f));
         } else if tok.match_str("struct") {
-            let s = parse_struct(toks)?;
+            let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
         } else {
-            todo!("unexpected token {tok:?}");
+            return Err("expected fn or struct".into()).at(&loc);
         }
     }
     Ok(Program(items))
+}
+
+// Note: "fn" keyword has already been consumed
+fn parse_function(toks: &mut TokBuf) -> Result<Function, Error> {
+    let name = toks.next().ok_or("expected function name")?;
+    if !name.is_ident() {
+        Err("function name must be identifier")?
+    }
+    let name = name.clone();
+    let args = parse_args(toks).at(&name.loc)?;
+    let (body, locs) = parse_body(toks)?;
+    Ok(Function {
+        name,
+        args,
+        body,
+        locs,
+    })
 }
 
 fn parse_args(toks: &mut TokBuf) -> Result<Args, Error> {
@@ -132,8 +145,9 @@ fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
     }
 }
 
-fn parse_body(toks: &mut TokBuf) -> Result<Vec<Stmt>, Error> {
+fn parse_body(toks: &mut TokBuf) -> Result<(Vec<Stmt>, Vec<Loc>), Error> {
     let mut stmts = vec![];
+    let mut locs = vec![];
     toks.expect(&TokBody::OpenBrace)?;
     toks.expect(&TokBody::Newline)?;
     let mut depth = 0;
@@ -142,9 +156,15 @@ fn parse_body(toks: &mut TokBuf) -> Result<Vec<Stmt>, Error> {
         if depth == 0 && toks.expect_opt(&TokBody::CloseBrace) {
             break;
         }
-        stmts.push(parse_stmt(toks, &mut depth)?);
+        let loc = toks
+            .peek()
+            .ok_or("unexpected eof in function body")?
+            .loc
+            .clone();
+        stmts.push(parse_stmt(toks, &mut depth).at(&loc)?);
+        locs.push(loc);
     }
-    Ok(stmts)
+    Ok((stmts, locs))
 }
 
 fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
@@ -399,7 +419,17 @@ fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
         toks.expect(&TokBody::Newline)?;
         return Ok(Stmt::WithFlagsExpr(lhs));
     }
-    todo!()
+    Err("expected assignment or close paren in #()")?
+}
+
+fn parse_field(toks: &mut TokBuf, field_name: &Token) -> Result<Type, Error> {
+    if !field_name.is_ident() {
+        Err("expected field name to be identifier")?;
+    }
+    toks.expect(&TokBody::Colon)?;
+    let ty = parse_type(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    Ok(ty)
 }
 
 // Note: "struct" keyword has already been consumed
@@ -417,16 +447,12 @@ fn parse_struct(toks: &mut TokBuf) -> Result<Struct, Error> {
             break;
         }
         let field_name = toks.next().ok_or("unexpected eof in struct")?.clone();
-        if !field_name.is_ident() {
-            Err("expected field name to be identifier")?;
-        }
-        toks.expect(&TokBody::Colon)?;
-        let ty = parse_type(toks)?;
+        let loc = field_name.loc.clone();
+        let ty = parse_field(toks, &field_name).at(&loc)?;
         fields.push(Field {
             name: field_name,
             ty,
         });
-        toks.expect(&TokBody::Newline)?;
     }
     Ok(Struct { name, fields })
 }

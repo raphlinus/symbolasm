@@ -1,0 +1,6 @@
+// error: dup_label.sy:5:1: error: duplicate label l
+fn f(a) {
+l:
+    bx lr
+l:
+}

@@ -7,7 +7,7 @@ use crate::{
     generate::GenCtx,
     ifthen,
     ir::IrCtx,
-    lex::Error,
+    lex::{Error, WithLoc},
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
@@ -39,7 +39,7 @@ impl FnScope {
         for (ix, stmt) in func.body.iter().enumerate() {
             if let Stmt::Label(l) = stmt {
                 if self.labels.insert(l.clone(), ix).is_some() {
-                    return Err(format!("duplicate label {l}"))?;
+                    return Err(format!("duplicate label {l}").into()).at(&func.locs[ix]);
                 }
             }
         }
@@ -81,15 +81,7 @@ impl FnScope {
             let (kind, label) = analyze_branch(stmt);
             fallthrough = !matches!(kind, BranchKind::UncondBranch);
             if let Stmt::Insn(Insn::Cbz(_, label) | Insn::Cbnz(_, label)) = stmt {
-                match self.labels.get(label) {
-                    Some(&target_ix) if target_ix > ix => (),
-                    Some(_) => Err(format!(
-                        "cbz/cbnz can only branch forward, {label} is behind"
-                    ))?,
-                    None => Err(format!(
-                        "cbz/cbnz target {label} must be a label in this function"
-                    ))?,
-                }
+                self.check_cbz_target(ix, label).at(&func.locs[ix])?;
             }
             if let Some(label) = label {
                 if let Some(target_ix) = self.labels.get(label) {
@@ -135,6 +127,18 @@ impl FnScope {
         }
     }
 
+    fn check_cbz_target(&self, ix: usize, label: &str) -> Result<(), Error> {
+        match self.labels.get(label) {
+            Some(&target_ix) if target_ix > ix => Ok(()),
+            Some(_) => Err(format!(
+                "cbz/cbnz can only branch forward, {label} is behind"
+            ))?,
+            None => Err(format!(
+                "cbz/cbnz target {label} must be a label in this function"
+            ))?,
+        }
+    }
+
     fn start_basic_block(&mut self, start: usize) {
         self.basic_block_starts
             .insert(start, self.basic_blocks.len());
@@ -168,7 +172,7 @@ impl FnScope {
             // might also consider .function / .endfunc; but this
         }
         let type_inf_ctx = TypeInferCtx::new(types, peripherals);
-        let typemap = type_inf_ctx.infer(func)?;
+        let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
         //println!("{if_analysis:?}");
         for block in &self.basic_blocks[1..] {
@@ -184,15 +188,17 @@ impl FnScope {
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
                 let if_state = &if_analysis[ix];
-                if IrCtx::can_lower(stmt) {
+                let result = if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, peripherals);
-                    let ir = ir_ctx.lower(stmt)?;
-                    let mut gen_ctx = GenCtx::new(types, w);
-                    gen_ctx.gen_from_ir(&ir, if_state)?;
+                    ir_ctx.lower(stmt).and_then(|ir| {
+                        let mut gen_ctx = GenCtx::new(types, w);
+                        gen_ctx.gen_from_ir(&ir, if_state)
+                    })
                 } else {
                     let mut gen_ctx = GenCtx::new(types, w);
-                    gen_ctx.gen_stmt(stmt, &regmap, if_state)?;
-                }
+                    gen_ctx.gen_stmt(stmt, &regmap, if_state)
+                };
+                result.at(&func.locs[ix])?;
                 regmap.apply(stmt);
                 //_ = writeln!(w, "{ix}: {regmap:?}");
             }

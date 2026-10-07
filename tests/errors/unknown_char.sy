@@ -1,0 +1,4 @@
+// error: unknown_char.sy:3:9: error: unknown char $
+fn f(a) {
+    a = $
+}

@@ -1,0 +1,4 @@
+// error: missing_brace.sy:2:11: error: expected OpenBrace, got Newline
+fn f(a, x)
+    bx lr
+}
