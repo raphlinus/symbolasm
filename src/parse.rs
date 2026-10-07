@@ -155,8 +155,14 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                 toks.expect(&TokBody::Newline)?;
                 return Ok(Stmt::Label(ident));
             }
-            // TODO: a bit more backtracking, among other things this precludes "b" as variable name
+            // A mnemonic followed by something that can only continue an
+            // expression (`b = 1`, `bl.next`) is a variable, not an instruction.
+            let continues_expr = toks.peek().is_some_and(|t| {
+                t.tok.is_assign_op()
+                    || matches!(t.tok, TokBody::At | TokBody::Period | TokBody::OpenBracket)
+            });
             match ident.as_str() {
+                _ if continues_expr => (),
                 "bx" => {
                     let dst = parse_expr(toks)?;
                     toks.expect(&TokBody::Newline)?;
@@ -288,7 +294,8 @@ fn parse_expr_rec(toks: &mut TokBuf, precedence: Precedence) -> Result<Expr, Err
     let mut lhs = parse_expr_unary(toks)?;
     while let Some(op) = toks.next() {
         if let Some(p) = Precedence::of(&op.tok) {
-            if p <= precedence {
+            // Strict comparison makes same-precedence ops left associative.
+            if p < precedence {
                 let op = op.clone();
                 let rhs = parse_expr_rec(toks, p)?;
                 lhs = Expr::Binop(Box::new(lhs), op, Box::new(rhs));
@@ -329,17 +336,16 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
                 TokBody::CloseParen => expr,
                 TokBody::Comma => {
                     let mut exprs = vec![expr];
-                    loop {
-                        let Some(tok) = toks.peek() else {
-                            return Err("unexpected eof inside parens")?;
-                        };
-                        if tok.tok == TokBody::CloseParen {
-                            break;
+                    // allows a trailing comma
+                    while !toks.expect_opt(&TokBody::CloseParen) {
+                        exprs.push(parse_expr(toks)?);
+                        let sep = toks.next().ok_or("unexpected eof inside parens")?;
+                        match sep.tok {
+                            TokBody::Comma => (),
+                            TokBody::CloseParen => break,
+                            _ => Err("expected comma or close paren in tuple")?,
                         }
-                        let expr = parse_expr(toks)?;
-                        exprs.push(expr);
                     }
-                    _ = toks.next(); // consume close paren
                     Expr::Tuple(exprs)
                 }
                 _ => Err("unknown separator in parens")?,
