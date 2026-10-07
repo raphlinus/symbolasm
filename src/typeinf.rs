@@ -87,7 +87,7 @@ impl<'a> TypeInferCtx<'a> {
     }
 
     fn infer_assign(&mut self, lhs: &parse::Expr, rhs: &parse::Expr) -> bool {
-        let Some(id) = lhs.as_ident() else {
+        let Some(id) = assigned_var(lhs) else {
             return false;
         };
         if self.map.map.contains_key(id) {
@@ -147,6 +147,14 @@ impl<'a> TypeInferCtx<'a> {
             parse::Expr::Slice(expr, _, _) => self.try_get_type(expr),
             parse::Expr::Tuple(_) => todo!(),
         }
+    }
+}
+
+/// The variable assigned by an lhs, either `x` or placed `x @r0`.
+fn assigned_var(lhs: &parse::Expr) -> Option<&str> {
+    match lhs {
+        parse::Expr::Binop(var, op, _place) if op.tok == TokBody::At => var.as_ident(),
+        _ => lhs.as_ident(),
     }
 }
 

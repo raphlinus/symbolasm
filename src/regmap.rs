@@ -74,7 +74,10 @@ impl Regmap {
 
     pub fn apply(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Assign(lhs, _op, _rhs) => self.apply_assign(lhs),
+            Stmt::Assign(lhs, _op, _rhs) | Stmt::WithFlagsAssign(lhs, _op, _rhs) => {
+                self.apply_assign(lhs)
+            }
+            Stmt::WithAddrUpdate(stmt, _lhs, _sign, _incr) => self.apply(stmt),
             Stmt::Insn(Insn::Bl(_)) => {
                 // By ABI convention
                 for r in [0, 1, 2, 3, 12, 14] {

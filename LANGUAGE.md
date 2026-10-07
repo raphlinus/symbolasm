@@ -86,4 +86,4 @@ Unlike C, pointer arithmetic is by bytes. However, the ++ and -- operators are i
 
 There are many cases where a given symbolasm statement could compile to multiple different asm instructions. We pick based on the shortest and most efficient compilation. There will be an analysis to determine whether setting flags is "don't care," and in those cases the flag setting variants are also considered.
 
-One edge case is `r0 = *r1++` which can compile to `stmia r1!, {r0}` or `ldr r0, [r1], #4`. The former is a 16 bit instruction, the latter 32 bit. The semantics are not identical because the former has an alignment requirement. We pick the shorter form. Possibly we'll have a way to express that the longer form should be generated, that it's an unaligned access.
+One edge case is `r0 = *r1++` which can compile to `ldmia r1!, {r0}` or `ldr r0, [r1], #4`. The former is a 16 bit instruction, the latter 32 bit. The semantics are not identical because the former has an alignment requirement. We pick the shorter form. Possibly we'll have a way to express that the longer form should be generated, that it's an unaligned access.
