@@ -7,10 +7,10 @@ use std::collections::HashMap;
 
 use crate::{
     error::Error,
+    globals::Globals,
     lex::TokBody,
     parse::{self, Function},
     stmt::Stmt,
-    svd::Peripherals,
     types::{Type, TypeHandle, TypePool},
 };
 
@@ -22,15 +22,15 @@ pub struct TypeMap {
 pub struct TypeInferCtx<'a> {
     map: TypeMap,
     types: &'a mut TypePool,
-    peripherals: Option<&'a Peripherals>,
+    globals: &'a Globals,
 }
 
 impl<'a> TypeInferCtx<'a> {
-    pub fn new(types: &'a mut TypePool, peripherals: Option<&'a Peripherals>) -> Self {
+    pub fn new(types: &'a mut TypePool, globals: &'a Globals) -> Self {
         Self {
             map: TypeMap::default(),
             types,
-            peripherals,
+            globals,
         }
     }
 
@@ -104,9 +104,13 @@ impl<'a> TypeInferCtx<'a> {
 
     fn try_get_type(&mut self, expr: &parse::Expr) -> Option<TypeHandle> {
         match expr {
-            parse::Expr::Ident(token) => token
-                .as_ident()
-                .and_then(|id| self.map.map.get(id).cloned()),
+            parse::Expr::Ident(token) => token.as_ident().and_then(|id| {
+                self.map
+                    .map
+                    .get(id)
+                    .cloned()
+                    .or_else(|| self.globals.extern_ty(id))
+            }),
             parse::Expr::Literal(_token) => Some(TypeHandle::default()),
             parse::Expr::Binop(expr, _token, _expr1) => self.try_get_type(expr),
             parse::Expr::Unary(token, expr) => match &token.tok {
@@ -124,7 +128,7 @@ impl<'a> TypeInferCtx<'a> {
             parse::Expr::Field(expr, field) => {
                 if expr.as_ident() == Some("peripherals") {
                     if let Some(name) = field.as_ident()
-                        && let Some(p) = self.peripherals
+                        && let Some(p) = &self.globals.peripherals
                         && let Some(periph) = p.periphs.get(name)
                     {
                         Some(periph.ty)
@@ -146,7 +150,9 @@ impl<'a> TypeInferCtx<'a> {
                 }
             }
             parse::Expr::Slice(expr, _, _) => self.try_get_type(expr),
-            parse::Expr::Tuple(_) => todo!(),
+            parse::Expr::Tuple(_) => None,
+            // lower16 and upper16 produce plain values
+            parse::Expr::Call(_, _) => Some(TypeHandle::default()),
         }
     }
 }

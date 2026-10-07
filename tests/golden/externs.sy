@@ -1,0 +1,27 @@
+// Extern symbols and the lower16/upper16 intrinsics.
+
+extern _data_source: *u32
+extern _data_start: *u32
+extern _data_size_words: u32
+
+fn copy_data() {
+    src @r0 = _data_source
+    dst @r1 = _data_start
+    count @r2 = lower16(_data_size_words)
+data_loop:
+    #(count -= 1)
+    val @r3 = *src; src += 4
+    *dst = val; dst += 4
+    bne data_loop
+    // placements made before the loop survive it
+    dst = _data_source
+    bx lr
+}
+
+fn halves() {
+    addr @r0 = lower16(_data_start)
+    addr[16..32] = upper16(_data_start)
+    k @r1 = lower16(0x12345678)
+    k[16..32] = 0x1234
+    bx lr
+}

@@ -1,0 +1,5 @@
+// error: symbol halves can only be assigned to [16..32]
+extern sym: u32
+fn f(a) {
+    a[0..16] = upper16(sym)
+}

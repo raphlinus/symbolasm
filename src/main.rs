@@ -8,6 +8,7 @@ use clap::Parser;
 use crate::{
     compile::FnScope,
     error::{Error, WithLoc, report_error},
+    globals::Globals,
     lex::tokenize,
     parse::parse_program,
     types::TypePool,
@@ -17,6 +18,7 @@ mod bitset;
 mod compile;
 mod error;
 mod generate;
+mod globals;
 mod ifthen;
 mod ir;
 mod lex;
@@ -55,10 +57,11 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
     let mut tokens = tokenize(src)?;
     let program = parse_program(&mut tokens)?;
     let mut types = TypePool::new();
-    let mut peripherals = None;
+    let mut globals = Globals::default();
 
     if let Some(svd) = &args.svd {
-        peripherals = Some(svd::parse_svd(svd, &mut types).map_err(|e| format!("{svd}: {e}"))?);
+        let peripherals = svd::parse_svd(svd, &mut types).map_err(|e| format!("{svd}: {e}"))?;
+        globals.peripherals = Some(peripherals);
     }
     //println!("{program:#?}");
     for item in &program.0 {
@@ -74,6 +77,15 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             types.populate_struct(s).at(&s.name.loc)?;
         }
     }
+    for item in &program.0 {
+        if let parse::Item::Extern(e) = item {
+            let name = e.name.as_ident().unwrap();
+            let ty = types.intern_from_ast(&e.ty).at(&e.name.loc)?;
+            if globals.externs.insert(name.to_owned(), ty).is_some() {
+                return Err(format!("duplicate extern {name}").into()).at(&e.name.loc);
+            }
+        }
+    }
 
     let w = &mut std::io::stdout();
     writeln!(w, ".cpu cortex-m33")?;
@@ -85,7 +97,7 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
                 scope.analyze(func)?;
-                scope.gen_function(func, &mut types, peripherals.as_ref(), w)?;
+                scope.gen_function(func, &mut types, &globals, w)?;
             }
             _ => (),
         }

@@ -6,12 +6,12 @@ use std::{collections::HashMap, io::Write};
 use crate::{
     error::{Error, WithLoc},
     generate::GenCtx,
+    globals::Globals,
     ifthen,
     ir::IrCtx,
     parse::Function,
     regmap::Regmap,
     stmt::{Insn, Stmt},
-    svd::Peripherals,
     typeinf::TypeInferCtx,
     types::TypePool,
 };
@@ -163,7 +163,7 @@ impl FnScope {
         &self,
         func: &Function,
         types: &mut TypePool,
-        peripherals: Option<&Peripherals>,
+        globals: &Globals,
         w: &mut impl Write,
     ) -> Result<(), Error> {
         if let Some(name) = func.name.as_ident() {
@@ -174,7 +174,7 @@ impl FnScope {
             writeln!(w, "{name}:")?;
             // might also consider .function / .endfunc; but this
         }
-        let type_inf_ctx = TypeInferCtx::new(types, peripherals);
+        let type_inf_ctx = TypeInferCtx::new(types, globals);
         let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
         //println!("{if_analysis:?}");
@@ -192,7 +192,7 @@ impl FnScope {
                 let stmt = &func.body[ix];
                 let if_state = &if_analysis[ix];
                 let result = if IrCtx::can_lower(stmt) {
-                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, peripherals);
+                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, globals);
                     ir_ctx.lower(stmt).and_then(|ir| {
                         let mut gen_ctx = GenCtx::new(types, w);
                         gen_ctx.gen_from_ir(&ir, if_state)

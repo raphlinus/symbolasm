@@ -1,0 +1,5 @@
+// error: cannot store to a symbol directly
+extern counter: *u32
+fn f(a) {
+    *counter = a
+}

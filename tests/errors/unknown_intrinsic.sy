@@ -1,0 +1,5 @@
+// error: unknown intrinsic lower15
+extern sym: u32
+fn f() {
+    x @r1 = lower15(sym)
+}

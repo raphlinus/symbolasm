@@ -1,10 +1,10 @@
 // Copyright 2026 Raph Levien
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use crate::globals::Globals;
 use crate::lex::Token;
 use crate::parse;
 use crate::regmap::parse_register;
-use crate::svd::Peripherals;
 use crate::typeinf::TypeMap;
 use crate::{
     error::Error,
@@ -48,6 +48,16 @@ pub enum Body {
     Field(Box<Expr>, usize),
     Slice(Box<Expr>, usize, usize),
     Tuple(Vec<Expr>),
+    /// Address of an extern symbol.
+    Sym(String),
+    /// Half of an extern symbol's address, resolved by the linker.
+    SymHalf(Half, String),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Half {
+    Lower,
+    Upper,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -75,8 +85,7 @@ pub struct IrCtx<'a> {
     regmap: &'a Regmap,
     types: &'a mut TypePool,
     typemap: &'a TypeMap,
-    // This is peripherals for now, but will grow to data in global scope.
-    peripherals: Option<&'a Peripherals>,
+    globals: &'a Globals,
 }
 
 impl BinOp {
@@ -121,13 +130,13 @@ impl<'a> IrCtx<'a> {
         regmap: &'a Regmap,
         types: &'a mut TypePool,
         typemap: &'a TypeMap,
-        peripherals: Option<&'a Peripherals>,
+        globals: &'a Globals,
     ) -> Self {
         Self {
             regmap,
             types,
             typemap,
-            peripherals,
+            globals,
         }
     }
 
@@ -190,10 +199,13 @@ impl<'a> IrCtx<'a> {
                 let ty = self.type_of_ident(id).ok_or("type lookup failed")?;
                 let reg = if let Some(reg) = parse_register(id) {
                     reg
+                } else if let Some(reg) = self.regmap.lookup(id) {
+                    reg
+                } else if self.globals.extern_ty(id).is_some() {
+                    let body = Body::Sym(id.to_owned());
+                    return Ok(Expr { ty, body });
                 } else {
-                    self.regmap
-                        .lookup(id)
-                        .ok_or(format!("variable {id} not found"))?
+                    return Err(format!("variable {id} not found"))?;
                 };
                 let body = Body::Reg(reg);
                 Ok(Expr { ty, body })
@@ -279,6 +291,7 @@ impl<'a> IrCtx<'a> {
                 let body = Body::Slice(expr.into(), *start, *end);
                 Ok(Expr { ty, body })
             }
+            parse::Expr::Call(name, args) => self.lower_call(name, args),
             parse::Expr::Tuple(exps) => {
                 let mut irs = vec![];
                 let mut types = vec![];
@@ -296,7 +309,7 @@ impl<'a> IrCtx<'a> {
 
     fn lower_peripheral(&mut self, field: &Token) -> Result<Expr, Error> {
         if let Some(name) = field.as_ident()
-            && let Some(p) = self.peripherals
+            && let Some(p) = &self.globals.peripherals
         {
             if let Some(periph) = p.periphs.get(name) {
                 let ty = periph.ty;
@@ -308,6 +321,44 @@ impl<'a> IrCtx<'a> {
         } else {
             Err("peripherals not set up properly")?
         }
+    }
+
+    fn lower_call(&mut self, name: &Token, args: &[parse::Expr]) -> Result<Expr, Error> {
+        let name = name.as_ident().unwrap();
+        let half = match name {
+            "lower16" => Half::Lower,
+            "upper16" => Half::Upper,
+            _ => return Err(format!("unknown intrinsic {name}"))?,
+        };
+        let [arg] = args else {
+            return Err(format!("{name} takes one argument"))?;
+        };
+        let ty = TypeHandle::default();
+        let body = match arg {
+            parse::Expr::Literal(lit) => {
+                let TokBody::Number(n) = lit.tok else {
+                    return Err("malformed literal")?;
+                };
+                let n = n as u32;
+                Body::Imm(if half == Half::Lower {
+                    n & 0xffff
+                } else {
+                    n >> 16
+                })
+            }
+            parse::Expr::Ident(id)
+                if let Some(id) = id.as_ident()
+                    && self.globals.extern_ty(id).is_some() =>
+            {
+                Body::SymHalf(half, id.to_owned())
+            }
+            _ => {
+                return Err(format!(
+                    "{name} argument must be an extern symbol or literal"
+                ))?;
+            }
+        };
+        Ok(Expr { ty, body })
     }
 
     fn lower_addr_update(
@@ -330,6 +381,8 @@ impl<'a> IrCtx<'a> {
     fn type_of_ident(&mut self, id: &str) -> Option<TypeHandle> {
         // TODO: symbol lookup etc
         if let Some(ty) = self.typemap.lookup(id) {
+            Some(ty)
+        } else if let Some(ty) = self.globals.extern_ty(id) {
             Some(ty)
         } else {
             Some(TypeHandle::default())

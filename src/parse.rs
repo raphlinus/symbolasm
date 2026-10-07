@@ -17,6 +17,14 @@ pub struct Program(pub Vec<Item>);
 pub enum Item {
     Function(Function),
     Struct(Struct),
+    Extern(Extern),
+}
+
+/// A global symbol satisfied by the linker: `extern name: type`.
+#[derive(Debug)]
+pub struct Extern {
+    pub name: Token,
+    pub ty: Type,
 }
 
 #[derive(Debug)]
@@ -53,6 +61,8 @@ pub enum Expr {
     Field(Box<Expr>, Token),
     Slice(Box<Expr>, usize, usize),
     Tuple(Vec<Expr>),
+    /// Function call syntax, currently only used for intrinsics.
+    Call(Token, Vec<Expr>),
 }
 
 #[derive(Debug)]
@@ -80,8 +90,11 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
         } else if tok.match_str("struct") {
             let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
+        } else if tok.match_str("extern") {
+            let e = parse_extern(toks).at(&loc)?;
+            items.push(Item::Extern(e));
         } else {
-            return Err("expected fn or struct".into()).at(&loc);
+            return Err("expected fn, struct or extern".into()).at(&loc);
         }
     }
     Ok(Program(items))
@@ -372,7 +385,14 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
                 _ => Err("unknown separator in parens")?,
             }
         }
-        TokBody::Identifier(_) => Expr::Ident(first.clone()),
+        TokBody::Identifier(_) => {
+            let name = first.clone();
+            if toks.expect_opt(&TokBody::OpenParen) {
+                Expr::Call(name, parse_call_args(toks)?)
+            } else {
+                Expr::Ident(name)
+            }
+        }
         TokBody::Number(_) => Expr::Literal(first.clone()),
         _ => Err("unknown token for expr")?,
     };
@@ -404,6 +424,33 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
         }
     }
     Ok(expr)
+}
+
+// Note: open paren has already been consumed
+fn parse_call_args(toks: &mut TokBuf) -> Result<Vec<Expr>, Error> {
+    let mut args = vec![];
+    while !toks.expect_opt(&TokBody::CloseParen) {
+        args.push(parse_expr(toks)?);
+        let sep = toks.next().ok_or("unexpected eof in call")?;
+        match sep.tok {
+            TokBody::Comma => (),
+            TokBody::CloseParen => break,
+            _ => Err("expected comma or close paren in call")?,
+        }
+    }
+    Ok(args)
+}
+
+// Note: "extern" keyword has already been consumed
+fn parse_extern(toks: &mut TokBuf) -> Result<Extern, Error> {
+    let name = toks.next().ok_or("expected extern name")?.clone();
+    if !name.is_ident() {
+        Err("extern name must be identifier")?
+    }
+    toks.expect(&TokBody::Colon)?;
+    let ty = parse_type(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    Ok(Extern { name, ty })
 }
 
 fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {

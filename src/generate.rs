@@ -11,7 +11,7 @@ use std::{io::Write, ops::Deref};
 use crate::{
     error::Error,
     ifthen::IfState,
-    ir::{Assign, BinOp, Body, Expr, Ir, UnaryOp},
+    ir::{Assign, BinOp, Body, Expr, Half, Ir, UnaryOp},
     lex::{TokBody, Token},
     regmap::{Regmap, parse_register},
     stmt::Stmt,
@@ -133,6 +133,26 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     writeln!(self.w, ", ={n}")?;
                 }
             }
+            Body::Sym(sym) => {
+                // adr would be shorter, but GNU as rejects it for symbols not
+                // defined in the same file, and its range is only +/-4095.
+                if with_flags == WithFlags::Yes {
+                    Err("loading a symbol address cannot set flags")?;
+                }
+                self.start_insn("ldr", if_state)?;
+                write!(self.w, " ")?;
+                write_reg(lhs, self.w)?;
+                writeln!(self.w, ", ={sym}")?;
+            }
+            Body::SymHalf(half, sym) => {
+                if with_flags == WithFlags::Yes {
+                    Err("movw cannot set flags")?;
+                }
+                self.start_insn("movw", if_state)?;
+                write!(self.w, " ")?;
+                write_reg(lhs, self.w)?;
+                writeln!(self.w, ", #:{}:{sym}", half_reloc(*half))?;
+            }
             Body::Unary(UnaryOp::Deref, rhs) => {
                 let insn = ldr_for_ty(self.types.pointee(rhs.ty));
                 self.start_insn(insn, if_state)?;
@@ -240,11 +260,29 @@ impl<'a, W: Write> GenCtx<'a, W> {
         if let Body::Reg(r) = &a.body {
             // TODO: ensure end > start, otherwise error
             let width = end - start;
+            let is_top_half = start == 16 && end == 32;
             match &rhs.body {
-                Body::Imm(n) => {
-                    if *n != 0 {
-                        Err("can only clear slices, not other immediates")?;
+                Body::Imm(n) if *n != 0 => {
+                    if !is_top_half || *n > 0xffff {
+                        Err(
+                            "only 16 bit immediates into [16..32] (movt), otherwise slices can only be cleared",
+                        )?;
                     }
+                    self.start_insn("movt", if_state)?;
+                    write!(self.w, " ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #{n}")?;
+                }
+                Body::SymHalf(half, sym) => {
+                    if !is_top_half {
+                        Err("symbol halves can only be assigned to [16..32] (movt)")?;
+                    }
+                    self.start_insn("movt", if_state)?;
+                    write!(self.w, " ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #:{}:{sym}", half_reloc(*half))?;
+                }
+                Body::Imm(_) => {
                     self.start_insn("bfc", if_state)?;
                     write!(self.w, " ")?;
                     write_reg(*r, self.w)?;
@@ -273,6 +311,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
         incr: i32,
         if_state: &IfState,
     ) -> Result<(), Error> {
+        if let Body::Sym(_) = &addr.body {
+            Err("cannot store to a symbol directly; load its address into a register")?;
+        }
         match &rhs.body {
             Body::Reg(r) => {
                 let insn = str_for_ty(self.types.pointee(addr.ty));
@@ -493,6 +534,13 @@ impl<'a, W: Write> GenCtx<'a, W> {
 
     fn gen_addr(&mut self, addr: &Expr, incr: i32) -> Result<(), Error> {
         match &addr.body {
+            Body::Sym(sym) => {
+                // PC-relative literal load
+                if incr != 0 {
+                    Err("cannot update a symbol address")?;
+                }
+                write!(self.w, "{sym}")?;
+            }
             Body::Reg(r) => {
                 write!(self.w, "[")?;
                 write_reg(*r, self.w)?;
@@ -672,6 +720,13 @@ fn check_lit_ok(insn: &str, lit: &Token) -> Result<(), Error> {
         }
     } else {
         Err("expected number in literal token")?
+    }
+}
+
+fn half_reloc(half: Half) -> &'static str {
+    match half {
+        Half::Lower => "lower16",
+        Half::Upper => "upper16",
     }
 }
 
