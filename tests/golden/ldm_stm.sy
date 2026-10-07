@@ -1,0 +1,14 @@
+// Single word post-increment transfers use 16 bit ldmia/stmia when they can.
+
+fn copy(src: *u32, dst: *u32) {
+    val @r3 = *src; src += 4
+    *dst = val; dst += 4
+    // high register: no 16 bit form
+    hi @r8 = *src; src += 4
+    *dst = hi; dst += 4
+    // halfword: not a word transfer
+    h @r2 = *(src as *u16); src += 4
+    // increment other than 4
+    val = *src; src += 8
+    bx lr
+}

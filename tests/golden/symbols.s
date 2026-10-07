@@ -10,8 +10,8 @@ copy_data:
     movw r2, #:lower16:_data_size_words
 data_loop:
     subs r2, r2, #1
-    ldr r3, [r0], #4
-    str r3, [r1], #4
+    ldm r0!, {r3}
+    stm r1!, {r3}
     bne data_loop
     ldr r1, =_data_source
     bx lr

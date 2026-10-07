@@ -324,6 +324,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
         match &rhs.body {
             Body::Reg(r) => {
                 let insn = str_for_ty(self.types.pointee(addr.ty));
+                if insn == "str" && self.gen_single_ldm_stm("stm", *r, addr, incr, if_state)? {
+                    return Ok(());
+                }
                 self.start_insn(insn, if_state)?;
                 write!(self.w, " ")?;
                 write_reg(*r, self.w)?;
@@ -353,6 +356,34 @@ impl<'a, W: Write> GenCtx<'a, W> {
         } else {
             Err("tuple load must be from deref of address")?
         }
+    }
+
+    /// Use 16 bit `ldmia rb!, {rt}` / `stmia rb!, {rt}` for a post-incremented
+    /// word transfer when the encoding allows it. Unlike `ldr rt, [rb], #4`,
+    /// this requires the address to be word aligned.
+    fn gen_single_ldm_stm(
+        &mut self,
+        insn: &str,
+        rt: u8,
+        addr: &Expr,
+        incr: i32,
+        if_state: &IfState,
+    ) -> Result<bool, Error> {
+        let Body::Reg(rb) = addr.body else {
+            return Ok(false);
+        };
+        // The 16 bit encodings only take low registers, and for ldm the base
+        // can't be in the list if it's written back.
+        if incr != 4 || rt >= 8 || rb >= 8 || (insn == "ldm" && rt == rb) {
+            return Ok(false);
+        }
+        self.start_insn(insn, if_state)?;
+        write!(self.w, " ")?;
+        write_reg(rb, self.w)?;
+        write!(self.w, "!, {{")?;
+        write_reg(rt, self.w)?;
+        writeln!(self.w, "}}")?;
+        Ok(true)
     }
 
     fn gen_loadstore_tuple(
@@ -482,6 +513,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
         } else if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
             if let Body::Reg(r) = &lhs.body {
                 let insn = ldr_for_ty(self.types.pointee(addr.ty));
+                if insn == "ldr" && self.gen_single_ldm_stm("ldm", *r, addr, incr, if_state)? {
+                    return Ok(());
+                }
                 self.start_insn(insn, if_state)?;
                 write!(self.w, " ")?;
                 write_reg(*r, self.w)?;
