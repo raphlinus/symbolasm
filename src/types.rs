@@ -202,21 +202,22 @@ impl TypePool {
             let handle = TupleHandle(self.tuples.len());
             self.tuples.push(els.to_vec());
             self.tuple_inv.insert(els.to_vec(), handle);
-            // TODO: size & alignment, set types, info, inv_map
+            // Layout follows the same rules as structs.
             let mut offset = 0;
             let mut align = 1;
             for el in els {
                 let el_info = self.info[el.0];
                 let align_mask = el_info.align - 1;
                 offset = (offset + align_mask) & !align_mask;
+                offset += el_info.size;
                 align = align.max(el_info.align);
             }
             let info = TypeInfo::new(offset, align);
             let ty = Type::Tuple(handle);
+            let ty_handle = TypeHandle(self.types.len());
             self.types.push(ty.clone());
             self.info.push(info);
-            let ty_handle = TypeHandle(self.types.len());
-            self.inv_map.insert(ty.clone(), ty_handle);
+            self.inv_map.insert(ty, ty_handle);
             ty_handle
         }
     }
