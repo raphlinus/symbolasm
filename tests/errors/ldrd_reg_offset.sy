@@ -1,0 +1,5 @@
+// error: ldrd has no register offset form in Thumb
+fn f(p: *u32) {
+    offset @r3 = 12
+    (x @r1, y @r2) = *(p + offset)
+}

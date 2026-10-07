@@ -1,0 +1,4 @@
+// error: left operand of binop must be reg
+fn f(a, x) {
+    y @r2 = a - x - 1
+}

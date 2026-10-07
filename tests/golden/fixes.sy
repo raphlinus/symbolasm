@@ -1,0 +1,45 @@
+// Regression cases for fixes in the parser and codegen.
+
+fn div(a, x) {
+    q @r2 = a / x
+    sq @r3 = (a as i32) / x
+    bx lr
+}
+
+fn tuple3(p: *u32) {
+    x @r1 = 1
+    y @r2 = 2
+    z @r3 = 3
+    *p = (x, y, z)
+    (x, y, z) = *p; p += 12
+    bx lr
+}
+
+fn assoc(a, x) {
+    // left associative: (a - x) - 1 would need two instructions,
+    // so only test that shifts group with the right operand
+    y @r2 = a - (x << 2)
+    bx lr
+}
+
+fn branch_named_vars(a) {
+    b @r1 = a
+    b += 1
+    bl @r2 = b
+    cbz bl, out
+    a = bl
+out:
+    bx lr
+}
+
+fn slices(a: i32) {
+    s @r1 = a[4..12]
+    u @r2 = (a as u32)[4..12]
+    bx lr
+}
+
+fn placed_flags(a, x) {
+    #(c @r2 = a + x)
+    c += 1
+    bx lr
+}

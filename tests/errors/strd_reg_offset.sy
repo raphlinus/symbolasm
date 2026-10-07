@@ -1,0 +1,7 @@
+// error: strd has no register offset form in Thumb
+fn f(p: *u32) {
+    x @r1 = 1
+    y @r2 = 2
+    offset @r3 = 12
+    *(p + offset) = (x, y)
+}

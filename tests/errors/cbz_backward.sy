@@ -1,0 +1,6 @@
+// error: cbz/cbnz can only branch forward
+fn f(a) {
+top:
+    a -= 1
+    cbnz a, top
+}
