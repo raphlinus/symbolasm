@@ -80,6 +80,17 @@ impl FnScope {
             }
             let (kind, label) = analyze_branch(stmt);
             fallthrough = !matches!(kind, BranchKind::UncondBranch);
+            if let Stmt::Insn(Insn::Cbz(_, label) | Insn::Cbnz(_, label)) = stmt {
+                match self.labels.get(label) {
+                    Some(&target_ix) if target_ix > ix => (),
+                    Some(_) => Err(format!(
+                        "cbz/cbnz can only branch forward, {label} is behind"
+                    ))?,
+                    None => Err(format!(
+                        "cbz/cbnz target {label} must be a label in this function"
+                    ))?,
+                }
+            }
             if let Some(label) = label {
                 if let Some(target_ix) = self.labels.get(label) {
                     let target_block = self.basic_block_starts[target_ix];

@@ -215,8 +215,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 if let Body::Reg(r) = &a.body {
                     self.start_insn_flags(insn, with_flags, if_state)?;
                     write!(self.w, " ")?;
+                    write_reg(lhs, self.w)?;
+                    write!(self.w, ", ")?;
                     write_reg(*r, self.w)?;
                     writeln!(self.w, ", #{start}, #{width}")?;
+                } else {
+                    Err("slice source must be register")?;
                 }
             }
             _ => todo!(),
@@ -353,6 +357,13 @@ impl<'a, W: Write> GenCtx<'a, W> {
         // Now try strd
         if els.len() != 2 {
             Err("tuple store not eligible for stm, strd only does pairs")?;
+        }
+        if let Body::Binop(_, _, offset) = &addr.body
+            && !matches!(offset.body, Body::Imm(_))
+        {
+            Err(format!(
+                "{op}rd has no register offset form in Thumb; only immediate offsets"
+            ))?;
         }
         self.start_insn(&format!("{op}rd"), if_state)?;
         write!(self.w, " ")?;
@@ -675,7 +686,13 @@ fn insn_for_binop(binop: BinOp, ty: &Type) -> &'static str {
         BinOp::Add => "add",
         BinOp::Sub => "sub",
         BinOp::Mul => "mul",
-        BinOp::Div => "div",
+        BinOp::Div => {
+            if ty.is_signed() {
+                "sdiv"
+            } else {
+                "udiv"
+            }
+        }
         BinOp::And => "and",
         BinOp::Orr => "orr",
         BinOp::Eor => "eor",
