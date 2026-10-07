@@ -48,9 +48,9 @@ pub enum Body {
     Field(Box<Expr>, usize),
     Slice(Box<Expr>, usize, usize),
     Tuple(Vec<Expr>),
-    /// Address of an extern symbol.
+    /// Address of a linker symbol.
     Sym(String),
-    /// Half of an extern symbol's address, resolved by the linker.
+    /// Half of a linker symbol's address, resolved by the linker.
     SymHalf(Half, String),
 }
 
@@ -201,7 +201,7 @@ impl<'a> IrCtx<'a> {
                     reg
                 } else if let Some(reg) = self.regmap.lookup(id) {
                     reg
-                } else if self.globals.extern_ty(id).is_some() {
+                } else if self.globals.symbol_ty(id).is_some() {
                     let body = Body::Sym(id.to_owned());
                     return Ok(Expr { ty, body });
                 } else {
@@ -348,14 +348,12 @@ impl<'a> IrCtx<'a> {
             }
             parse::Expr::Ident(id)
                 if let Some(id) = id.as_ident()
-                    && self.globals.extern_ty(id).is_some() =>
+                    && self.globals.symbol_ty(id).is_some() =>
             {
                 Body::SymHalf(half, id.to_owned())
             }
             _ => {
-                return Err(format!(
-                    "{name} argument must be an extern symbol or literal"
-                ))?;
+                return Err(format!("{name} argument must be a symbol or literal"))?;
             }
         };
         Ok(Expr { ty, body })
@@ -382,7 +380,7 @@ impl<'a> IrCtx<'a> {
         // TODO: symbol lookup etc
         if let Some(ty) = self.typemap.lookup(id) {
             Some(ty)
-        } else if let Some(ty) = self.globals.extern_ty(id) {
+        } else if let Some(ty) = self.globals.symbol_ty(id) {
             Some(ty)
         } else {
             Some(TypeHandle::default())

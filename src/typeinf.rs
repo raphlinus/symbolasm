@@ -109,7 +109,7 @@ impl<'a> TypeInferCtx<'a> {
                     .map
                     .get(id)
                     .cloned()
-                    .or_else(|| self.globals.extern_ty(id))
+                    .or_else(|| self.globals.symbol_ty(id))
             }),
             parse::Expr::Literal(_token) => Some(TypeHandle::default()),
             parse::Expr::Binop(expr, _token, _expr1) => self.try_get_type(expr),

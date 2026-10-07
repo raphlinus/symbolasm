@@ -87,3 +87,19 @@ Unlike C, pointer arithmetic is by bytes. However, the ++ and -- operators are i
 There are many cases where a given symbolasm statement could compile to multiple different asm instructions. We pick based on the shortest and most efficient compilation. There will be an analysis to determine whether setting flags is "don't care," and in those cases the flag setting variants are also considered.
 
 One edge case is `r0 = *r1++` which can compile to `ldmia r1!, {r0}` or `ldr r0, [r1], #4`. The former is a 16 bit instruction, the latter 32 bit. The semantics are not identical because the former has an alignment requirement. We pick the shorter form. Possibly we'll have a way to express that the longer form should be generated, that it's an unaligned access.
+
+## Linker symbols
+
+The top level item `symbol name: type` populates a global symbol, which is expected to be satisfied by the linker, typically one defined in the linker script such as `_data_start`.
+
+Note that this departs from C (and Rust) `extern`. There, the name denotes an object at the symbol's address, so the address is `&name`, and a size computed by the linker script has to be written `(uintptr_t)&name`. In symbolasm, the *value* of `name` is the symbol's address, and `type` is the type of that value. For example, `symbol _data_start: *u32` is a pointer, and `symbol _data_size_words: u32` is a number. The keyword `extern` may be used for a possible C-like form later.
+
+A symbol can be used in the following contexts:
+
+| ARM assembly            | Symbolasm                  |
+| ----------------------- | -------------------------- |
+| ldr r0, =name           | r0 = name                  |
+| mov r0, #:lower16:name  | r0 = lower16(name)         |
+| movt r0, #:upper16:name | r0[16..32] = upper16(name) |
+
+For the time being, we're *not* using symbol declarations for functions; bl to an otherwise undeclared label is just passed through to the assembler. We may very well rethink this for the purpose of better validation, especially if and when we have real function types.

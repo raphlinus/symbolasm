@@ -78,11 +78,11 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
         }
     }
     for item in &program.0 {
-        if let parse::Item::Extern(e) = item {
+        if let parse::Item::Symbol(e) = item {
             let name = e.name.as_ident().unwrap();
             let ty = types.intern_from_ast(&e.ty).at(&e.name.loc)?;
-            if globals.externs.insert(name.to_owned(), ty).is_some() {
-                return Err(format!("duplicate extern {name}").into()).at(&e.name.loc);
+            if globals.symbols.insert(name.to_owned(), ty).is_some() {
+                return Err(format!("duplicate symbol {name}").into()).at(&e.name.loc);
             }
         }
     }

@@ -1,8 +1,8 @@
-// Extern symbols and the lower16/upper16 intrinsics.
+// Linker symbols and the lower16/upper16 intrinsics.
 
-extern _data_source: *u32
-extern _data_start: *u32
-extern _data_size_words: u32
+symbol _data_source: *u32
+symbol _data_start: *u32
+symbol _data_size_words: u32
 
 fn copy_data() {
     src @r0 = _data_source

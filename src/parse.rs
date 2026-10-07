@@ -17,12 +17,14 @@ pub struct Program(pub Vec<Item>);
 pub enum Item {
     Function(Function),
     Struct(Struct),
-    Extern(Extern),
+    Symbol(SymbolDecl),
 }
 
-/// A global symbol satisfied by the linker: `extern name: type`.
+/// A symbol satisfied by the linker: `symbol name: type`.
+///
+/// Unlike a C extern, the name's value is the symbol's address.
 #[derive(Debug)]
-pub struct Extern {
+pub struct SymbolDecl {
     pub name: Token,
     pub ty: Type,
 }
@@ -90,11 +92,11 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
         } else if tok.match_str("struct") {
             let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
-        } else if tok.match_str("extern") {
-            let e = parse_extern(toks).at(&loc)?;
-            items.push(Item::Extern(e));
+        } else if tok.match_str("symbol") {
+            let e = parse_symbol(toks).at(&loc)?;
+            items.push(Item::Symbol(e));
         } else {
-            return Err("expected fn, struct or extern".into()).at(&loc);
+            return Err("expected fn, struct or symbol".into()).at(&loc);
         }
     }
     Ok(Program(items))
@@ -441,16 +443,16 @@ fn parse_call_args(toks: &mut TokBuf) -> Result<Vec<Expr>, Error> {
     Ok(args)
 }
 
-// Note: "extern" keyword has already been consumed
-fn parse_extern(toks: &mut TokBuf) -> Result<Extern, Error> {
-    let name = toks.next().ok_or("expected extern name")?.clone();
+// Note: "symbol" keyword has already been consumed
+fn parse_symbol(toks: &mut TokBuf) -> Result<SymbolDecl, Error> {
+    let name = toks.next().ok_or("expected symbol name")?.clone();
     if !name.is_ident() {
-        Err("extern name must be identifier")?
+        Err("symbol name must be identifier")?
     }
     toks.expect(&TokBody::Colon)?;
     let ty = parse_type(toks)?;
     toks.expect(&TokBody::Newline)?;
-    Ok(Extern { name, ty })
+    Ok(SymbolDecl { name, ty })
 }
 
 fn parse_withflags(toks: &mut TokBuf) -> Result<Stmt, Error> {
