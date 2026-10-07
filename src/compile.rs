@@ -61,7 +61,9 @@ impl FnScope {
             }
             let (kind, _) = analyze_branch(stmt);
             last_was_branch = matches!(kind, BranchKind::CondBranch | BranchKind::UncondBranch);
-            if is_block_start {
+            // A label at the very start continues the entry block, which
+            // receives the argument placements.
+            if is_block_start && self.basic_blocks.last().unwrap().start != ix {
                 self.basic_blocks.last_mut().unwrap().end = ix;
                 self.start_basic_block(ix);
             }
