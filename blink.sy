@@ -18,7 +18,7 @@ fn start() {
     *(io_bank0 + (led_pin << 3)) = function
     sio @r0 = peripherals.SIO
     mask @r2 = 1
-    mask = mask << led_pin
+    mask <<= led_pin
     sio.GPIO_OE_SET = mask
 blink_loop:
     sio.GPIO_OUT_XOR = mask
