@@ -230,7 +230,7 @@ fn analyze_branch(stmt: &Stmt) -> (BranchKind, Option<&str>) {
             Insn::Pop(regs) if regs.iter().any(|r| r.as_ident() == Some("pc")) => {
                 (BranchKind::UncondBranch, None)
             }
-            Insn::Push(_) | Insn::Pop(_) => (BranchKind::NotBranch, None),
+            Insn::Push(_) | Insn::Pop(_) | Insn::Cps(_, _) => (BranchKind::NotBranch, None),
         }
     } else {
         (BranchKind::NotBranch, None)

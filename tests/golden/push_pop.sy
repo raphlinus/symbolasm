@@ -25,3 +25,9 @@ fn rename_in_it(a) {
     }
     bx lr
 }
+
+fn irqs() {
+    cpsid(i)
+    cpsie(i)
+    bx lr
+}

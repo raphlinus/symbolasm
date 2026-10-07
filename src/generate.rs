@@ -665,6 +665,10 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     self.gen_reglist("push", regs, regmap, if_state)?
                 }
                 crate::stmt::Insn::Pop(regs) => self.gen_reglist("pop", regs, regmap, if_state)?,
+                crate::stmt::Insn::Cps(enable, flags) => {
+                    self.start_insn(if *enable { "cpsie" } else { "cpsid" }, if_state)?;
+                    writeln!(self.w, " {flags}")?;
+                }
                 crate::stmt::Insn::Bl(target) => {
                     self.start_insn("bl", if_state)?;
                     writeln!(self.w, " {target}")?;

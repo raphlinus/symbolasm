@@ -27,3 +27,10 @@ rename_in_it:
     moveq r0, r0
     movne r0, #2
     bx lr
+.section .text
+.global irqs
+.thumb_func
+irqs:
+    cpsid i
+    cpsie i
+    bx lr

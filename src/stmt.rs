@@ -27,4 +27,6 @@ pub enum Insn {
     Cbnz(Expr, String),
     Push(Vec<Expr>),
     Pop(Vec<Expr>),
+    /// cpsie/cpsid, with the interrupt mask flags (`i` and/or `f`)
+    Cps(bool, String),
 }

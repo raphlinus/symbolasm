@@ -281,6 +281,16 @@ fn parse_stmt(toks: &mut TokBuf, depth: &mut usize) -> Result<Stmt, Error> {
                     match name.as_ident().unwrap() {
                         "push" => Ok(Stmt::Insn(Insn::Push(args))),
                         "pop" => Ok(Stmt::Insn(Insn::Pop(args))),
+                        n @ ("cpsie" | "cpsid") => {
+                            let [arg] = &args[..] else {
+                                return Err(format!("{n} takes one argument, i or f"))?;
+                            };
+                            let flags = arg
+                                .as_ident()
+                                .filter(|f| matches!(*f, "i" | "f" | "if"))
+                                .ok_or(format!("{n} argument must be i, f or if"))?;
+                            Ok(Stmt::Insn(Insn::Cps(n == "cpsie", flags.to_owned())))
+                        }
                         n => Err(format!("unknown instruction {n}"))?,
                     }
                 } else {
