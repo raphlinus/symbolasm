@@ -34,7 +34,9 @@ mod types;
 
 #[derive(Parser)]
 struct Args {
-    path: String,
+    /// Source files, compiled as one program, as if concatenated in order.
+    #[arg(required = true)]
+    paths: Vec<String>,
 
     #[arg(short, long)]
     svd: Option<String>,
@@ -42,15 +44,25 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let src = match std::fs::read_to_string(&args.path) {
-        Ok(src) => src,
-        Err(e) => {
-            eprintln!("error: reading {}: {e}", args.path);
-            std::process::exit(1);
+    let mut src = String::new();
+    let mut files = vec![];
+    for path in &args.paths {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                files.push((path.clone(), src.len()));
+                src.push_str(&text);
+                if !text.ends_with('\n') {
+                    src.push('\n');
+                }
+            }
+            Err(e) => {
+                eprintln!("error: reading {path}: {e}");
+                std::process::exit(1);
+            }
         }
-    };
+    }
     if let Err(err) = run(&args, &src) {
-        report_error(&args.path, &src, &*err);
+        report_error(&files, &src, &*err);
         std::process::exit(1);
     }
 }

@@ -45,16 +45,26 @@ impl<T> WithLoc<T> for Result<T, Error> {
     }
 }
 
-/// Print an error, with line, column and the source line if it has a location.
-pub fn report_error(path: &str, src: &str, err: &(dyn std::error::Error + 'static)) {
+/// Print an error, with file, line, column and the source line if it has a
+/// location. `files` are the source files' paths and their start offsets
+/// in `src`, the files concatenated, in order.
+pub fn report_error(files: &[(String, usize)], src: &str, err: &(dyn std::error::Error + 'static)) {
     let Some(loc_err) = err.downcast_ref::<LocError>() else {
         eprintln!("error: {err}");
         return;
     };
     let offset = loc_err.loc.offset.min(src.len());
-    let line_start = src[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let (path, file_start) = files
+        .iter()
+        .rev()
+        .find(|(_, start)| *start <= offset)
+        .map_or(("", 0), |(path, start)| (path.as_str(), *start));
+    let line_start = src[..offset]
+        .rfind('\n')
+        .map_or(0, |i| i + 1)
+        .max(file_start);
     let line_end = src[offset..].find('\n').map_or(src.len(), |i| offset + i);
-    let line = src[..offset].matches('\n').count() + 1;
+    let line = src[file_start..offset].matches('\n').count() + 1;
     let col = src[line_start..offset].chars().count() + 1;
     eprintln!("{path}:{line}:{col}: error: {}", loc_err.err);
     eprintln!("{:>5} | {}", line, &src[line_start..line_end]);
