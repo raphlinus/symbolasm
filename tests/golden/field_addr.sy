@@ -1,0 +1,33 @@
+// &p.field is the base plus the field's offset.
+
+struct Queue {
+    rd: u32
+    wr: u32
+    buf: [u32; 4]
+}
+
+struct State {
+    v: u32
+    queue: Queue
+    lent: [u32; 2]
+}
+
+static mut state: State
+
+fn fields(p: *State, ix: u32) {
+    lent @r2 = &p.lent
+    l @r3 = *(lent + ix * 4)
+    q @r2 = &p.queue
+    wr @r3 = q.wr
+    buf @r2 = &p.queue.buf
+    first @r2 = &p.v
+    bx lr
+}
+
+fn statics() {
+    s @r0 = &state
+    lent @r1 = &state.lent
+    buf @r2 = &state.queue.buf
+    rd @r3 = &state.queue
+    bx lr
+}

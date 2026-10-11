@@ -1,0 +1,5 @@
+// error: & only applies to statics and fields
+fn f(a: u32) {
+    b @r1 = &a
+    bx lr
+}

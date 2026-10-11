@@ -298,17 +298,13 @@ impl<'a> IrCtx<'a> {
                 }
             }
             parse::Expr::Unary(op, expr) if op.tok == TokBody::Ampersand => {
-                let Some(id) = expr.as_ident() else {
-                    return Err("& only applies to statics")?;
-                };
-                let target = self
-                    .globals
-                    .static_ty(id)
-                    .ok_or(format!("& only applies to statics, {id} is not one"))?;
-                let target = self.types.decay(target);
-                let ty = self.types.get_handle(&Type::Ptr(target));
-                let body = Body::Sym(id.to_owned());
-                Ok(Expr { ty, body })
+                let mut addr = self.address_of(expr)?;
+                // A pointer to an array is a pointer to its first element.
+                if let Type::Ptr(target) = self.types.get(addr.ty) {
+                    let target = self.types.decay(*target);
+                    addr.ty = self.types.get_handle(&Type::Ptr(target));
+                }
+                Ok(addr)
             }
             parse::Expr::Unary(op, expr) => {
                 let expr = self.lower_expr(expr)?;
@@ -371,6 +367,74 @@ impl<'a> IrCtx<'a> {
                 let body = Body::Tuple(irs);
                 Ok(Expr { ty, body })
             }
+        }
+    }
+
+    /// The address of a place: a static (`&dvi`), or a field of a struct
+    /// reached through a pointer, a static, a peripheral, or an embedded
+    /// struct (`&p.lent`, `&dvi.queue`, `&peripherals.PPB.NVIC_ISER0`,
+    /// `&p.a.b`). The result is typed as a pointer to the place.
+    ///
+    /// A field's address is the base plus the field's offset: an add for a
+    /// register base, a constant for a peripheral, and a linker expression
+    /// (`sym + offset`) for a static.
+    fn address_of(&mut self, expr: &parse::Expr) -> Result<Expr, Error> {
+        match expr {
+            parse::Expr::Ident(tok) => {
+                let id = tok.as_ident().unwrap();
+                let target = self.globals.static_ty(id).ok_or(format!(
+                    "& only applies to statics and fields, {id} is not one"
+                ))?;
+                let ty = self.types.get_handle(&Type::Ptr(target));
+                let body = Body::Sym(id.to_owned());
+                Ok(Expr { ty, body })
+            }
+            parse::Expr::Field(base, field) => {
+                let base = if base.as_ident() == Some("peripherals") {
+                    return self.lower_peripheral(field);
+                } else if let Some(id) = base.as_ident()
+                    && self.globals.static_ty(id).is_some()
+                    && self.regmap.lookup(id).is_none()
+                {
+                    // the struct is the static itself
+                    self.address_of(base)?
+                } else if let parse::Expr::Field(..) = &**base
+                    && let Ok(inner) = self.address_of(base)
+                    && let Type::Ptr(inner_ty) = self.types.get(inner.ty)
+                    && let Type::Struct(_) = self.types.get(*inner_ty)
+                {
+                    // an embedded struct
+                    inner
+                } else {
+                    // a pointer to the struct
+                    self.lower_expr(base)?
+                };
+                let Type::Ptr(struct_ty) = self.types.get(base.ty) else {
+                    return Err("base must be pointer")?;
+                };
+                let Type::Struct(struct_handle) = self.types.get(*struct_ty) else {
+                    return Err("base must be pointer to struct")?;
+                };
+                let field = self
+                    .types
+                    .get_field(*struct_handle, field.as_ident().unwrap())
+                    .ok_or("field not found")?;
+                let (field_ty, offset) = (field.ty, field.offset as u32);
+                let ty = self.types.get_handle(&Type::Ptr(field_ty));
+                let body = match base.body {
+                    Body::Imm(a) => Body::Imm(a.wrapping_add(offset)),
+                    _ if offset == 0 => base.body,
+                    _ => {
+                        let offset = Expr {
+                            ty: TypeHandle::default(),
+                            body: Body::Imm(offset),
+                        };
+                        Body::Binop(base.into(), BinOp::Add, offset.into())
+                    }
+                };
+                Ok(Expr { ty, body })
+            }
+            _ => Err("& only applies to statics and fields")?,
         }
     }
 

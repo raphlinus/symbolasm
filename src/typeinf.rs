@@ -129,7 +129,7 @@ impl<'a> TypeInferCtx<'a> {
                 }),
                 TokBody::Minus | TokBody::Exclamation => self.try_get_type(expr),
                 TokBody::Ampersand => {
-                    let target = expr.as_ident().and_then(|id| self.globals.static_ty(id))?;
+                    let target = self.place_type(expr)?;
                     let target = self.types.decay(target);
                     Some(self.types.get_handle(&Type::Ptr(target)))
                 }
@@ -164,6 +164,46 @@ impl<'a> TypeInferCtx<'a> {
             parse::Expr::Tuple(_) => None,
             // lower16 and upper16 produce plain values
             parse::Expr::Call(_, _) => Some(TypeHandle::default()),
+        }
+    }
+}
+
+impl TypeInferCtx<'_> {
+    /// The type of a place that `&` can apply to: a static, or a field of a
+    /// struct reached through a pointer, a static, a peripheral or an
+    /// embedded struct.
+    fn place_type(&mut self, expr: &parse::Expr) -> Option<TypeHandle> {
+        match expr {
+            parse::Expr::Ident(id) => self.globals.static_ty(id.as_ident()?),
+            parse::Expr::Field(base, field) => {
+                let struct_ty = if let parse::Expr::Field(inner, periph) = &**base
+                    && inner.as_ident() == Some("peripherals")
+                {
+                    let p = self.globals.peripherals.as_ref()?;
+                    let Type::Ptr(t) = self.types.get(p.periphs.get(periph.as_ident()?)?.ty) else {
+                        return None;
+                    };
+                    *t
+                } else if let Some(id) = base.as_ident()
+                    && !self.map.map.contains_key(id)
+                    && let Some(ty) = self.globals.static_ty(id)
+                {
+                    ty
+                } else if let parse::Expr::Field(..) = &**base {
+                    self.place_type(base)?
+                } else {
+                    let base_ty = self.try_get_type(base)?;
+                    let Type::Ptr(t) = self.types.get(base_ty) else {
+                        return None;
+                    };
+                    *t
+                };
+                let Type::Struct(s) = self.types.get(struct_ty) else {
+                    return None;
+                };
+                Some(self.types.get_field(*s, field.as_ident()?)?.ty)
+            }
+            _ => None,
         }
     }
 }

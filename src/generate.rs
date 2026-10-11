@@ -210,6 +210,19 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 self.gen_operand2(rhs)?;
                 writeln!(self.w)?;
             }
+            // The address of a static's field, resolved by the linker
+            Body::Binop(a, BinOp::Add, b)
+                if let Body::Sym(sym) = &a.body
+                    && let Body::Imm(offset) = b.body =>
+            {
+                if with_flags == WithFlags::Yes {
+                    Err("loading a symbol address cannot set flags")?;
+                }
+                self.start_insn("ldr", if_state)?;
+                write!(self.w, " ")?;
+                write_reg(lhs, self.w)?;
+                writeln!(self.w, ", ={sym}+{offset}")?;
+            }
             Body::Binop(a, op, b) => {
                 let ty = self.types.get(a.ty);
                 let mut insn = insn_for_binop(*op, ty);
