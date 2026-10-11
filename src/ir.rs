@@ -53,6 +53,8 @@ pub enum Body {
     Sym(String),
     /// Half of a linker symbol's address, resolved by the linker.
     SymHalf(Half, String),
+    /// An instruction written as a function call, like `clz(x)`
+    Intrinsic(&'static str, Vec<Expr>),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -456,6 +458,23 @@ impl<'a> IrCtx<'a> {
 
     fn lower_call(&mut self, name: &Token, args: &[parse::Expr]) -> Result<Expr, Error> {
         let id = name.as_ident().unwrap();
+        if let Some(insn) = INSN_INTRINSICS.iter().find(|i| **i == id) {
+            let arity = if matches!(*insn, "pkhbt" | "pkhtb" | "ror") {
+                2
+            } else {
+                1
+            };
+            if args.len() != arity {
+                return Err(format!("{insn} takes {arity} argument(s)"))?;
+            }
+            let mut irs = vec![];
+            for arg in args {
+                irs.push(self.lower_expr(arg)?);
+            }
+            let ty = irs[0].ty;
+            let body = Body::Intrinsic(insn, irs);
+            return Ok(Expr { ty, body });
+        }
         let half = match id {
             "lower16" => Some(Half::Lower),
             "upper16" => Some(Half::Upper),
@@ -507,6 +526,11 @@ impl<'a> IrCtx<'a> {
     }
 }
 
+/// Instructions written as function calls, which compute a value.
+const INSN_INTRINSICS: &[&str] = &[
+    "clz", "rbit", "rev", "rev16", "revsh", "pkhbt", "pkhtb", "ror",
+];
+
 fn canonicalize_ir(ir: &mut Ir) -> Result<(), Error> {
     match ir {
         Ir::Assign(assign) => {
@@ -534,7 +558,7 @@ fn canonicalize(expr: &mut Expr) -> Result<(), Error> {
             canonicalize(b)?;
         }
         Body::Unary(_, a) | Body::Field(a, _) | Body::Slice(a, _, _) => canonicalize(a)?,
-        Body::Tuple(els) => {
+        Body::Tuple(els) | Body::Intrinsic(_, els) => {
             for el in els {
                 canonicalize(el)?;
             }

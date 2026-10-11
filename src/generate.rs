@@ -214,6 +214,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 self.gen_operand2(rhs)?;
                 writeln!(self.w)?;
             }
+            Body::Intrinsic(insn, args) => {
+                self.gen_intrinsic(lhs, insn, args, with_flags, if_state)?
+            }
             // The address of a static's field, resolved by the linker
             Body::Binop(a, BinOp::Add, b)
                 if let Body::Sym(sym) = &a.body
@@ -301,6 +304,80 @@ impl<'a, W: Write> GenCtx<'a, W> {
             }
             _ => todo!(),
         }
+        Ok(())
+    }
+
+    /// Instructions written as calls: `clz(a)`, `rbit(a)`, `rev(a)`,
+    /// `rev16(a)`, `revsh(a)`, `ror(a, n)`, `pkhbt(a, b << n)` and
+    /// `pkhtb(a, b >> n)`.
+    fn gen_intrinsic(
+        &mut self,
+        lhs: u8,
+        insn: &str,
+        args: &[Expr],
+        with_flags: WithFlags,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        let reg = |e: &Expr| match e.body {
+            Body::Reg(r) => Ok(r),
+            _ => Err(format!("{insn} arguments must be registers")),
+        };
+        let a = reg(&args[0])?;
+        let flags = if insn == "ror" {
+            with_flags
+        } else {
+            WithFlags::No
+        };
+        if with_flags == WithFlags::Yes && flags != WithFlags::Yes {
+            Err(format!("{insn} can't set flags"))?;
+        }
+        self.start_insn_flags(insn, flags, if_state)?;
+        write!(self.w, " ")?;
+        write_reg(lhs, self.w)?;
+        write!(self.w, ", ")?;
+        write_reg(a, self.w)?;
+        match (insn, args.get(1).map(|b| &b.body)) {
+            (_, None) => (),
+            ("ror", Some(Body::Imm(n))) => {
+                if !(1..=31).contains(n) {
+                    Err(format!("ror by {n} is out of range (1 to 31)"))?;
+                }
+                write!(self.w, ", #{n}")?;
+            }
+            ("ror", Some(Body::Reg(b))) => {
+                write!(self.w, ", ")?;
+                write_reg(*b, self.w)?;
+            }
+            ("pkhbt", Some(Body::Reg(b))) => {
+                write!(self.w, ", ")?;
+                write_reg(*b, self.w)?;
+            }
+            ("pkhbt", Some(Body::Binop(b, BinOp::Shl, n)))
+                if let (Body::Reg(b), Body::Imm(n)) = (&b.body, &n.body) =>
+            {
+                if *n > 31 {
+                    Err(format!("pkhbt shift {n} is out of range (0 to 31)"))?;
+                }
+                write!(self.w, ", ")?;
+                write_reg(*b, self.w)?;
+                write!(self.w, ", lsl #{n}")?;
+            }
+            ("pkhtb", Some(Body::Binop(b, BinOp::Shr, n)))
+                if let (Body::Reg(b), Body::Imm(n)) = (&b.body, &n.body) =>
+            {
+                // pkhtb shifts arithmetically, whatever the type
+                if !(1..=32).contains(n) {
+                    Err(format!("pkhtb shift {n} is out of range (1 to 32)"))?;
+                }
+                write!(self.w, ", ")?;
+                write_reg(*b, self.w)?;
+                write!(self.w, ", asr #{n}")?;
+            }
+            ("pkhbt", _) => Err("pkhbt's second argument must be b or b << n")?,
+            ("pkhtb", _) => Err("pkhtb's second argument must be b >> n")?,
+            _ => Err("ror's second argument must be a register or 1 to 31")?,
+        }
+        writeln!(self.w)?;
         Ok(())
     }
 

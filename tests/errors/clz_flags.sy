@@ -1,0 +1,5 @@
+// error: clz can't set flags
+fn f(a: u32) {
+    #(c @r2 = clz(a))
+    bx lr
+}

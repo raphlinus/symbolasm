@@ -1,0 +1,5 @@
+// error: ror by 32 is out of range
+fn f(a: u32) {
+    c @r2 = ror(a, 32)
+    bx lr
+}

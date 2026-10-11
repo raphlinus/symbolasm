@@ -1,0 +1,15 @@
+// Instructions written as function calls.
+fn calls(a: u32, b: u32) {
+    c @r2 = clz(a)
+    c = rbit(a)
+    c = rev(a)
+    c = rev16(a)
+    c = revsh(a)
+    c = ror(a, 8)
+    c = ror(a, b)
+    c = pkhbt(a, b << 16)
+    c = pkhbt(a, b)
+    c = pkhtb(a, b >> 16)
+    #(c = ror(a, 1))
+    bx lr
+}
