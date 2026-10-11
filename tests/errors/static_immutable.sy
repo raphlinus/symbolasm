@@ -1,2 +1,2 @@
-// error: only `static mut name: type`
+// error: an immutable static needs an initializer
 static dvi: u32

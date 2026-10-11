@@ -24,6 +24,9 @@ pub struct TypePool {
     structs: Vec<StructLayout>,
     tuples: Vec<Vec<TypeHandle>>,
     tuple_inv: HashMap<Vec<TypeHandle>, TupleHandle>,
+    /// Values of `const` items. They live here because array lengths in
+    /// types can refer to them.
+    consts: HashMap<String, u32>,
 }
 
 // We can probably derive Copy here too
@@ -39,6 +42,8 @@ pub enum Type {
     Ptr(TypeHandle),
     Struct(StructHandle),
     Tuple(TupleHandle),
+    /// Element type and count
+    Array(TypeHandle, u32),
 }
 
 #[derive(Clone, Copy)]
@@ -106,6 +111,46 @@ impl TypePool {
                 let ty = Type::Ptr(body);
                 Ok(self.get_handle(&ty))
             }
+            crate::parse::Type::Array(elem, count) => {
+                let elem = self.intern_from_ast(elem)?;
+                if self.info(elem).align() == 0 {
+                    Err("array element type must be defined before use")?;
+                }
+                let count = crate::consts::eval(count, self, &HashMap::new())?;
+                Ok(self.get_handle(&Type::Array(elem, count)))
+            }
+        }
+    }
+
+    /// A primitive or struct type by name.
+    pub fn named_type(&mut self, name: &str) -> Option<TypeHandle> {
+        let prim_ty = match name {
+            "u32" => Type::U32,
+            "u16" => Type::U16,
+            "u8" => Type::U8,
+            "i32" => Type::I32,
+            "i16" => Type::I16,
+            "i8" => Type::I8,
+            _ => return self.globals.get(name).copied(),
+        };
+        Some(self.get_handle(&prim_ty))
+    }
+
+    pub fn const_value(&self, name: &str) -> Option<u32> {
+        self.consts.get(name).copied()
+    }
+
+    pub fn define_const(&mut self, name: &str, value: u32) -> bool {
+        self.consts.insert(name.to_owned(), value).is_none()
+    }
+
+    /// The type a pointer to `ty` points to, decaying arrays to their
+    /// elements as in C, so `&buf` for an array is a pointer to its first
+    /// element.
+    pub fn decay(&self, ty: TypeHandle) -> TypeHandle {
+        match self.get(ty) {
+            Type::Array(elem, _) => *elem,
+            _ => ty,
         }
     }
 
@@ -150,9 +195,10 @@ impl TypePool {
             .globals
             .get(s.name.as_ident().unwrap())
             .ok_or("struct not registered")?;
-        // we should probably align size up; this is needed for arrays, but
-        // could conceivably be skipped for just embedding.
-        self.info[handle.0] = TypeInfo::new(offset, align);
+        // C layout: the size is a multiple of the alignment, so arrays of
+        // the struct keep every element aligned.
+        let size = (offset + align - 1) & !(align - 1);
+        self.info[handle.0] = TypeInfo::new(size, align);
         if let &Type::Struct(sh) = self.get(*handle) {
             self.structs[sh.0] = StructLayout(fields);
         } else {
@@ -187,6 +233,10 @@ impl TypePool {
             // This will get filled in later (in `populate_struct`)
             Type::Struct(_) => TypeInfo::new(0, 0),
             Type::Tuple(_) => TypeInfo::new(0, 0),
+            Type::Array(elem, count) => {
+                let elem = self.info[elem.0];
+                TypeInfo::new(elem.size * *count as usize, elem.align)
+            }
         }
     }
 

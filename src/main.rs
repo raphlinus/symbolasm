@@ -6,7 +6,7 @@ use std::io::Write;
 use clap::Parser;
 
 use crate::{
-    compile::{FnScope, section_directive},
+    compile::FnScope,
     error::{Error, WithLoc, report_error},
     globals::Globals,
     lex::tokenize,
@@ -16,6 +16,8 @@ use crate::{
 
 mod bitset;
 mod compile;
+mod consts;
+mod data;
 mod error;
 mod generate;
 mod globals;
@@ -69,38 +71,42 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             types.register_struct(s).at(&s.name.loc)?;
         }
     }
-    // Note: this requires define before use for struct inclusion.
-    // No problem for pointers though, just inclusion.
-    // To loosen this, we'd need topo sort.
+    // Items are defined in source order, so a struct embedded in another,
+    // a const used by another or in an array length, or a static named in
+    // size() or count() must come first. Pointers to structs are fine in
+    // any order.
     for item in &program.0 {
-        if let parse::Item::Struct(s) = item {
-            types.populate_struct(s).at(&s.name.loc)?;
-        }
-    }
-    for item in &program.0 {
-        if let parse::Item::Symbol(e) = item {
-            let name = e.name.as_ident().unwrap();
-            let ty = types.intern_from_ast(&e.ty).at(&e.name.loc)?;
-            if globals.symbols.insert(name.to_owned(), ty).is_some() {
-                return Err(format!("duplicate symbol {name}").into()).at(&e.name.loc);
+        match item {
+            parse::Item::Struct(s) => types.populate_struct(s).at(&s.name.loc)?,
+            parse::Item::Const(c) => {
+                let name = c.name.as_ident().unwrap();
+                let value = consts::eval(&c.value, &mut types, &globals.statics).at(&c.name.loc)?;
+                if globals.is_defined(name) || !types.define_const(name, value) {
+                    return Err(format!("{name} is already defined").into()).at(&c.name.loc);
+                }
             }
-        }
-        if let parse::Item::Static(s) = item {
-            let name = s.name.as_ident().unwrap();
-            let ty = types.intern_from_ast(&s.ty).at(&s.name.loc)?;
-            if globals.statics.insert(name.to_owned(), ty).is_some() {
-                return Err(format!("duplicate static {name}").into()).at(&s.name.loc);
+            parse::Item::Symbol(e) => {
+                let name = e.name.as_ident().unwrap();
+                let ty = types.intern_from_ast(&e.ty).at(&e.name.loc)?;
+                if globals.is_defined(name) || types.const_value(name).is_some() {
+                    return Err(format!("{name} is already defined").into()).at(&e.name.loc);
+                }
+                globals.symbols.insert(name.to_owned(), ty);
             }
+            parse::Item::Static(s) => {
+                let name = s.name.as_ident().unwrap();
+                let ty = types.intern_from_ast(&s.ty).at(&s.name.loc)?;
+                if globals.is_defined(name) || types.const_value(name).is_some() {
+                    return Err(format!("{name} is already defined").into()).at(&s.name.loc);
+                }
+                globals.statics.insert(name.to_owned(), ty);
+                if !s.mutable {
+                    globals.immutable.insert(name.to_owned());
+                }
+            }
+            parse::Item::Function(_) => (),
         }
     }
-    if let Some(name) = globals
-        .statics
-        .keys()
-        .find(|n| globals.symbols.contains_key(*n))
-    {
-        return Err(format!("{name} is both a symbol and a static").into());
-    }
-
     let w = &mut std::io::stdout();
     writeln!(w, ".cpu cortex-m33")?;
     writeln!(w, ".syntax unified")?;
@@ -117,21 +123,10 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
         }
     }
 
-    // Zero initialized statics, in source order
+    // Statics, in source order
     for item in &program.0 {
         if let parse::Item::Static(s) = item {
-            let name = s.name.as_ident().unwrap();
-            let info = types.info(globals.statics[name]);
-            if info.size() == 0 {
-                return Err(format!("static {name} has zero size").into()).at(&s.name.loc);
-            }
-            match &s.link_section {
-                Some(section) => writeln!(w, "{}", section_directive(section, name, false))?,
-                None => writeln!(w, ".section .bss")?,
-            }
-            writeln!(w, ".balign {}", info.align())?;
-            writeln!(w, "{name}:")?;
-            writeln!(w, "    .space {}", info.size())?;
+            data::emit_static(s, &mut types, &globals, w).at(&s.name.loc)?;
         }
     }
     Ok(())

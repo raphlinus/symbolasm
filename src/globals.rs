@@ -3,7 +3,7 @@
 
 //! Names in global scope: peripherals and linker symbols.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{svd::Peripherals, types::TypeHandle};
 
@@ -14,11 +14,22 @@ pub struct Globals {
     pub symbols: HashMap<String, TypeHandle>,
     /// Statics defined in this file, with the type of the data.
     pub statics: HashMap<String, TypeHandle>,
+    /// The statics declared without `mut`.
+    pub immutable: HashSet<String>,
 }
 
 impl Globals {
     pub fn static_ty(&self, name: &str) -> Option<TypeHandle> {
         self.statics.get(name).copied()
+    }
+
+    pub fn is_immutable(&self, name: &str) -> bool {
+        self.immutable.contains(name)
+    }
+
+    /// Whether the name is a symbol or a static.
+    pub fn is_defined(&self, name: &str) -> bool {
+        self.statics.contains_key(name) || self.symbols.contains_key(name)
     }
 
     pub fn symbol_ty(&self, name: &str) -> Option<TypeHandle> {

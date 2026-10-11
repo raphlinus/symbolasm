@@ -1,0 +1,2 @@
+// error: 0x100 doesn't fit in 1 bytes
+static mut a: u8 = 256

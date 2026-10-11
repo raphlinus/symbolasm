@@ -110,6 +110,12 @@ impl<'a> TypeInferCtx<'a> {
                     .get(id)
                     .cloned()
                     .or_else(|| self.globals.symbol_ty(id))
+                    .or_else(|| {
+                        self.globals
+                            .static_ty(id)
+                            .filter(|_| self.globals.is_immutable(id))
+                    })
+                    .or_else(|| self.types.const_value(id).map(|_| TypeHandle::default()))
             }),
             parse::Expr::Literal(_token) => Some(TypeHandle::default()),
             parse::Expr::Binop(expr, _token, _expr1) => self.try_get_type(expr),
@@ -124,6 +130,7 @@ impl<'a> TypeInferCtx<'a> {
                 TokBody::Minus | TokBody::Exclamation => self.try_get_type(expr),
                 TokBody::Ampersand => {
                     let target = expr.as_ident().and_then(|id| self.globals.static_ty(id))?;
+                    let target = self.types.decay(target);
                     Some(self.types.get_handle(&Type::Ptr(target)))
                 }
                 _ => None,

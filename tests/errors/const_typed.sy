@@ -1,0 +1,2 @@
+// error: consts are untyped
+const N: u32 = 3

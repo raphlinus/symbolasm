@@ -1,0 +1,5 @@
+// error: struct initializers
+struct S {
+    a: u32
+}
+static mut s: S = 0

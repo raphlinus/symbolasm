@@ -1,0 +1,2 @@
+// error: initializer repeats 2 times, the array has 3 elements
+static mut a: [u32; 3] = [0; 2]

@@ -1,0 +1,51 @@
+// const, arrays, count/size, and initialized statics.
+
+const H_ACTIVE = 640
+const WORDS = 1 + H_ACTIVE / 2
+const TMDS_CTRL_00 = 0x354
+const SYNC = TMDS_CTRL_00 | (TMDS_CTRL_00 << 10) | (TMDS_CTRL_00 << 20)
+
+symbol _stack_top: *u32
+
+struct Pair {
+    a: u32
+    b: u8
+}
+
+// Zero initialized, in .bss
+static mut line: [u32; WORDS]
+static mut pairs: [Pair; 3]
+
+// Initialized, in .data
+static mut cmds: [u32; 4] = [
+    (1 << 12) | 16,
+    SYNC,
+    (3 << 12) | H_ACTIVE,
+    0x7c00, // trailing comma
+]
+static mut fill: [u32; 11] = [0x7c007c00; 11]
+static mut bytes: [u8; 4] = [1, 0xff, -1, 0]
+static mut halves: [i16; 2] = [-2, 0x7fff]
+static mut ptrs: [*u32; 3] = [_stack_top, &line, &line + 4]
+static mut counter: u32 = 5
+static mut grid: [[u8; 2]; 2] = [[1, 2], [3, 4]]
+
+// Immutable, in .text, loaded PC-relative
+static magic: u32 = 0xabcd1234
+
+const LINE_BYTES = size(line)
+const N_PAIRS = count(pairs)
+const PAIR_SIZE = size(Pair)
+
+fn use_data(i: u32) {
+    p @r1 = &line
+    x @r2 = *(p + i * 4)
+    n @r3 = count(line)
+    n = size(pairs)
+    n = LINE_BYTES + PAIR_SIZE
+    n = magic
+    q @r1 = &pairs
+    b @r2 = q.b
+    w @r3 = WORDS
+    bx lr
+}

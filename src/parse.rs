@@ -19,15 +19,36 @@ pub enum Item {
     Struct(Struct),
     Symbol(SymbolDecl),
     Static(StaticDecl),
+    Const(ConstDecl),
 }
 
-/// Data defined in this file. So far only `static mut name: type`, which is
-/// zero initialized and placed in .bss.
+/// Data defined in this file: `static [mut] name: type [= init]`.
+///
+/// A `static mut` without an initializer is zero initialized.
 #[derive(Debug)]
 pub struct StaticDecl {
     pub name: Token,
+    pub mutable: bool,
     pub ty: Type,
+    pub init: Option<Init>,
     pub link_section: Option<String>,
+}
+
+/// An initializer for a static.
+#[derive(Debug)]
+pub enum Init {
+    Expr(Expr),
+    /// `[a, b, c]`
+    List(Vec<Init>),
+    /// `[x; n]`
+    Repeat(Box<Init>, Expr),
+}
+
+/// A named constant, `const name = expr`, folded to an immediate.
+#[derive(Debug)]
+pub struct ConstDecl {
+    pub name: Token,
+    pub value: Expr,
 }
 
 /// A symbol satisfied by the linker: `symbol name: type`.
@@ -58,13 +79,15 @@ pub struct Arg {
     pub ty: Option<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Ident(Token),
     Ptr(Box<Type>),
+    /// `[T; n]`, where n is a constant expression
+    Array(Box<Type>, Box<Expr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     Ident(Token),
     Literal(Token),
@@ -124,11 +147,14 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
             let mut s = parse_static(toks).at(&loc)?;
             s.link_section = link_section.take().map(|(s, _)| s);
             items.push(Item::Static(s));
+        } else if tok.match_str("const") {
+            let c = parse_const(toks).at(&loc)?;
+            items.push(Item::Const(c));
         } else if tok.match_str("symbol") {
             let e = parse_symbol(toks).at(&loc)?;
             items.push(Item::Symbol(e));
         } else {
-            return Err("expected fn, struct, static or symbol".into()).at(&loc);
+            return Err("expected fn, struct, static, const or symbol".into()).at(&loc);
         }
     }
     if let Some((_, attr_loc)) = link_section {
@@ -213,6 +239,13 @@ fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
         TokBody::Asterisk => {
             let expr = parse_type(toks)?;
             Ok(Type::Ptr(expr.into()))
+        }
+        TokBody::OpenBracket => {
+            let elem = parse_type(toks)?;
+            toks.expect(&TokBody::Semicolon)?;
+            let count = parse_expr(toks)?;
+            toks.expect(&TokBody::CloseBracket)?;
+            Ok(Type::Array(elem.into(), count.into()))
         }
         _ => Err("unknown type")?,
     }
@@ -679,22 +712,79 @@ fn parse_call_args(toks: &mut TokBuf) -> Result<Vec<Expr>, Error> {
 
 // Note: "static" keyword has already been consumed
 fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
-    if !toks.peek().is_some_and(|t| t.match_str("mut")) {
-        Err("only `static mut name: type` (zero initialized) is supported so far")?
-    }
-    toks.next();
+    let mutable = toks.expect_opt_ident("mut");
     let name = toks.next().ok_or("expected static name")?.clone();
     if !name.is_ident() {
         Err("static name must be identifier")?
     }
     toks.expect(&TokBody::Colon)?;
     let ty = parse_type(toks)?;
+    let init = if toks.expect_opt(&TokBody::Equals) {
+        Some(parse_init(toks)?)
+    } else if !mutable {
+        Err("an immutable static needs an initializer")?
+    } else {
+        None
+    };
     toks.expect(&TokBody::Newline)?;
     Ok(StaticDecl {
         name,
+        mutable,
         ty,
+        init,
         link_section: None,
     })
+}
+
+/// An initializer: an expression, `[a, b, c]` or `[x; n]`. Inside the
+/// brackets newlines are ignored and a trailing comma is allowed.
+fn parse_init(toks: &mut TokBuf) -> Result<Init, Error> {
+    if !toks.expect_opt(&TokBody::OpenBracket) {
+        return Ok(Init::Expr(parse_expr(toks)?));
+    }
+    toks.eat_newlines();
+    let mut items = vec![];
+    if toks.expect_opt(&TokBody::CloseBracket) {
+        return Ok(Init::List(items));
+    }
+    let first = parse_init(toks)?;
+    toks.eat_newlines();
+    if toks.expect_opt(&TokBody::Semicolon) {
+        toks.eat_newlines();
+        let count = parse_expr(toks)?;
+        toks.eat_newlines();
+        toks.expect(&TokBody::CloseBracket)?;
+        return Ok(Init::Repeat(first.into(), count));
+    }
+    items.push(first);
+    loop {
+        if toks.expect_opt(&TokBody::CloseBracket) {
+            break;
+        }
+        toks.expect(&TokBody::Comma)?;
+        toks.eat_newlines();
+        if toks.expect_opt(&TokBody::CloseBracket) {
+            break;
+        }
+        items.push(parse_init(toks)?);
+        toks.eat_newlines();
+    }
+    Ok(Init::List(items))
+}
+
+// Note: "const" keyword has already been consumed
+fn parse_const(toks: &mut TokBuf) -> Result<ConstDecl, Error> {
+    let name = toks.next().ok_or("expected const name")?.clone();
+    if !name.is_ident() {
+        Err("const name must be identifier")?
+    }
+    if toks.peek().is_some_and(|t| t.tok == TokBody::Colon) {
+        Err("consts are untyped: `const name = value`")?
+    }
+    toks.expect(&TokBody::Equals)?;
+    let value = parse_expr(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    Ok(ConstDecl { name, value })
 }
 
 // Note: "symbol" keyword has already been consumed

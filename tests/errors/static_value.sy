@@ -1,0 +1,6 @@
+// error: isn't a scalar; use &tab
+static tab: [u32; 2] = [1, 2]
+fn f() {
+    x @r0 = tab
+    bx lr
+}

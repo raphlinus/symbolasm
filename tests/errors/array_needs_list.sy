@@ -1,0 +1,2 @@
+// error: an array needs a
+static mut a: [u32; 2] = 0

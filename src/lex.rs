@@ -349,6 +349,16 @@ impl TokBuf {
         }
     }
 
+    /// Consume the next token if it's the identifier `id`.
+    pub fn expect_opt_ident(&mut self, id: &str) -> bool {
+        if self.peek().is_some_and(|t| t.match_str(id)) {
+            self.ix += 1;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn eat_newlines(&mut self) {
         while self.expect_opt(&TokBody::Newline) {}
     }

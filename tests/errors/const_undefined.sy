@@ -1,0 +1,2 @@
+// error: M is not a constant
+const N = M + 1

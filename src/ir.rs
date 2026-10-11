@@ -1,6 +1,7 @@
 // Copyright 2026 Raph Levien
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use crate::consts::fold_binop;
 use crate::globals::Globals;
 use crate::lex::Token;
 use crate::parse;
@@ -89,7 +90,7 @@ pub struct IrCtx<'a> {
 }
 
 impl BinOp {
-    fn from_tok(tok: &TokBody) -> Option<Self> {
+    pub fn from_tok(tok: &TokBody) -> Option<Self> {
         Some(match tok {
             TokBody::Plus => BinOp::Add,
             TokBody::Asterisk => BinOp::Mul,
@@ -128,22 +129,6 @@ impl UnaryOp {
             _ => return None,
         })
     }
-}
-
-/// Constant folding of an operation on two literals, with 32 bit wrapping
-/// unsigned semantics.
-fn fold_binop(a: u32, op: BinOp, b: u32) -> Result<u32, Error> {
-    Ok(match op {
-        BinOp::Add => a.wrapping_add(b),
-        BinOp::Sub => a.wrapping_sub(b),
-        BinOp::Mul => a.wrapping_mul(b),
-        BinOp::Div => a.checked_div(b).ok_or("division by zero in constant")?,
-        BinOp::And => a & b,
-        BinOp::Orr => a | b,
-        BinOp::Eor => a ^ b,
-        BinOp::Shl => a.checked_shl(b).ok_or("shift out of range in constant")?,
-        BinOp::Shr => a.checked_shr(b).ok_or("shift out of range in constant")?,
-    })
 }
 
 impl<'a> IrCtx<'a> {
@@ -232,11 +217,41 @@ impl<'a> IrCtx<'a> {
                     reg
                 } else if let Some(reg) = self.regmap.lookup(id) {
                     reg
+                } else if let Some(n) = self.types.const_value(id) {
+                    let body = Body::Imm(n);
+                    return Ok(Expr { ty, body });
                 } else if self.globals.symbol_ty(id).is_some() {
                     let body = Body::Sym(id.to_owned());
                     return Ok(Expr { ty, body });
-                } else if self.globals.static_ty(id).is_some() {
-                    return Err(format!("static mut {id} can only be used as &{id}"))?;
+                } else if let Some(static_ty) = self.globals.static_ty(id) {
+                    // An immutable scalar static can be loaded by value,
+                    // PC-relative. A static mut is only reachable through
+                    // its address, since it lives in RAM.
+                    if !self.globals.is_immutable(id) {
+                        return Err(format!("static mut {id} can only be used as &{id}"))?;
+                    }
+                    if !matches!(
+                        self.types.get(static_ty),
+                        Type::U32
+                            | Type::I32
+                            | Type::U16
+                            | Type::I16
+                            | Type::U8
+                            | Type::I8
+                            | Type::Ptr(_)
+                    ) {
+                        return Err(format!("{id} isn't a scalar; use &{id}"))?;
+                    }
+                    let addr_ty = self.types.get_handle(&Type::Ptr(static_ty));
+                    let addr = Expr {
+                        ty: addr_ty,
+                        body: Body::Sym(id.to_owned()),
+                    };
+                    let body = Body::Unary(UnaryOp::Deref, addr.into());
+                    return Ok(Expr {
+                        ty: static_ty,
+                        body,
+                    });
                 } else {
                     return Err(format!("variable {id} not found"))?;
                 };
@@ -290,6 +305,7 @@ impl<'a> IrCtx<'a> {
                     .globals
                     .static_ty(id)
                     .ok_or(format!("& only applies to statics, {id} is not one"))?;
+                let target = self.types.decay(target);
                 let ty = self.types.get_handle(&Type::Ptr(target));
                 let body = Body::Sym(id.to_owned());
                 Ok(Expr { ty, body })
@@ -375,38 +391,26 @@ impl<'a> IrCtx<'a> {
     }
 
     fn lower_call(&mut self, name: &Token, args: &[parse::Expr]) -> Result<Expr, Error> {
-        let name = name.as_ident().unwrap();
-        let half = match name {
-            "lower16" => Half::Lower,
-            "upper16" => Half::Upper,
-            _ => return Err(format!("unknown intrinsic {name}"))?,
-        };
-        let [arg] = args else {
-            return Err(format!("{name} takes one argument"))?;
+        let id = name.as_ident().unwrap();
+        let half = match id {
+            "lower16" => Some(Half::Lower),
+            "upper16" => Some(Half::Upper),
+            _ => None,
         };
         let ty = TypeHandle::default();
-        let body = match arg {
-            parse::Expr::Literal(lit) => {
-                let TokBody::Number(n) = lit.tok else {
-                    return Err("malformed literal")?;
-                };
-                let n = n as u32;
-                Body::Imm(if half == Half::Lower {
-                    n & 0xffff
-                } else {
-                    n >> 16
-                })
-            }
-            parse::Expr::Ident(id)
-                if let Some(id) = id.as_ident()
-                    && self.globals.symbol_ty(id).is_some() =>
-            {
-                Body::SymHalf(half, id.to_owned())
-            }
-            _ => {
-                return Err(format!("{name} argument must be a symbol or literal"))?;
-            }
-        };
+        if let Some(half) = half
+            && let [parse::Expr::Ident(arg)] = args
+            && let Some(arg) = arg.as_ident()
+            && self.globals.symbol_ty(arg).is_some()
+        {
+            let body = Body::SymHalf(half, arg.to_owned());
+            return Ok(Expr { ty, body });
+        }
+        // Otherwise it must be a constant: size(), count(), or a half of
+        // a constant.
+        let call = parse::Expr::Call(name.clone(), args.to_vec());
+        let n = crate::consts::eval(&call, self.types, &self.globals.statics)?;
+        let body = Body::Imm(n);
         Ok(Expr { ty, body })
     }
 
