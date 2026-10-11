@@ -172,6 +172,16 @@ impl<'a> IrCtx<'a> {
     }
 
     pub fn lower(&mut self, stmt: &Stmt) -> Result<Ir, Error> {
+        let mut ir = self.lower_raw(stmt)?;
+        canonicalize_ir(&mut ir)?;
+        Ok(ir)
+    }
+
+    fn is_ptr(&self, ty: TypeHandle) -> bool {
+        matches!(self.types.get(ty), Type::Ptr(_))
+    }
+
+    fn lower_raw(&mut self, stmt: &Stmt) -> Result<Ir, Error> {
         match stmt {
             Stmt::Assign(lhs, op, rhs) => self.lower_assign(lhs, &op.tok, rhs, false),
             Stmt::WithFlagsExpr(expr) => {
@@ -261,11 +271,13 @@ impl<'a> IrCtx<'a> {
                     let lhs = self.lower_expr(lhs)?;
                     let rhs = self.lower_expr(rhs)?;
                     let op = BinOp::from_tok(&op.tok).ok_or("unknown binop")?;
-                    if let (Body::Imm(a), Body::Imm(b)) = (&lhs.body, &rhs.body) {
-                        let body = Body::Imm(fold_binop(*a, op, *b)?);
-                        return Ok(Expr { ty: lhs.ty, body });
-                    }
-                    let ty = lhs.ty;
+                    // Pointer arithmetic keeps the pointer's type, whichever
+                    // side it's on.
+                    let ty = if self.is_ptr(rhs.ty) && !self.is_ptr(lhs.ty) {
+                        rhs.ty
+                    } else {
+                        lhs.ty
+                    };
                     let body = Body::Binop(lhs.into(), op, rhs.into());
                     Ok(Expr { ty, body })
                 }
@@ -405,7 +417,7 @@ impl<'a> IrCtx<'a> {
         sign: i32,
         incr: &parse::Expr,
     ) -> Result<Ir, Error> {
-        let ir = self.lower(stmt)?;
+        let ir = self.lower_raw(stmt)?;
         let _lhs = self.lower_expr(lhs)?;
         // TODO: check that _lhs matches addr in the stmt
         let rhs = self.lower_expr(incr)?;
@@ -425,4 +437,76 @@ impl<'a> IrCtx<'a> {
             Some(TypeHandle::default())
         }
     }
+}
+
+fn canonicalize_ir(ir: &mut Ir) -> Result<(), Error> {
+    match ir {
+        Ir::Assign(assign) => {
+            canonicalize(&mut assign.lhs)?;
+            canonicalize(&mut assign.rhs)
+        }
+        Ir::WithFlags(expr) => canonicalize(expr),
+        Ir::WithAddrUpdate(ir, _) => canonicalize_ir(ir),
+    }
+}
+
+/// Rewrite an expression into the forms code generation expects.
+///
+/// Children are canonicalized first. Then:
+/// - an operation on two literals is folded,
+/// - a commutative operation with a literal or compound left operand and a
+///   register right operand is swapped, so the register comes first,
+/// - multiplication by a power of two becomes a left shift, so
+///   `*(p + i * 4)` is the same as `*(p + (i << 2))`,
+/// - `(a + c1) + c2` with literals c1 and c2 becomes `a + (c1 + c2)`.
+fn canonicalize(expr: &mut Expr) -> Result<(), Error> {
+    match &mut expr.body {
+        Body::Binop(a, _, b) => {
+            canonicalize(a)?;
+            canonicalize(b)?;
+        }
+        Body::Unary(_, a) | Body::Field(a, _) | Body::Slice(a, _, _) => canonicalize(a)?,
+        Body::Tuple(els) => {
+            for el in els {
+                canonicalize(el)?;
+            }
+        }
+        Body::Reg(_) | Body::Imm(_) | Body::Sym(_) | Body::SymHalf(_, _) => return Ok(()),
+    }
+    let Body::Binop(a, op, b) = &mut expr.body else {
+        return Ok(());
+    };
+    if let (Body::Imm(x), Body::Imm(y)) = (&a.body, &b.body) {
+        expr.body = Body::Imm(fold_binop(*x, *op, *y)?);
+        return Ok(());
+    }
+    let commutative = matches!(
+        op,
+        BinOp::Add | BinOp::Mul | BinOp::And | BinOp::Orr | BinOp::Eor
+    );
+    if commutative && !matches!(a.body, Body::Reg(_)) && matches!(b.body, Body::Reg(_)) {
+        std::mem::swap(a, b);
+    }
+    if *op == BinOp::Mul
+        && let Body::Imm(n) = b.body
+        && n.is_power_of_two()
+    {
+        if n == 1 {
+            let a = (**a).clone();
+            expr.body = a.body;
+            return Ok(());
+        }
+        *op = BinOp::Shl;
+        b.body = Body::Imm(n.trailing_zeros());
+    }
+    if *op == BinOp::Add
+        && let Body::Imm(c2) = b.body
+        && let Body::Binop(inner_a, BinOp::Add, inner_b) = &a.body
+        && let Body::Imm(c1) = inner_b.body
+    {
+        let inner_a = (**inner_a).clone();
+        **a = inner_a;
+        b.body = Body::Imm(c1.wrapping_add(c2));
+    }
+    Ok(())
 }

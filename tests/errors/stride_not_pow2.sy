@@ -1,0 +1,5 @@
+// error: index stride 12 isn't encodable
+fn f(p: *u32, i: u32) {
+    x @r2 = *(p + i * 12)
+    bx lr
+}

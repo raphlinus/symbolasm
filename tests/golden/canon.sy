@@ -1,0 +1,16 @@
+// Canonicalization: multiplication by a power of two becomes a shift,
+// commutative operations put the register first, and literal offsets
+// are combined.
+fn index(p: *u32, i: u32) {
+    x @r2 = *(p + i * 4)
+    *(p + 4 * i) = x
+    y @r3 = *((i << 2) + p)
+    h @r2 = *((p as *u16) + i * 2)
+    b @r3 = *((p as *u8) + i * 1)
+    z @r3 = i * 8
+    z = 2 * i
+    z = 0xff & i
+    x @r2 = *(p + 4 + 4)
+    q @r0 = p + 4 + 8
+    bx lr
+}

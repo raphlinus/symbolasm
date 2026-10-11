@@ -634,7 +634,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         if let Body::Reg(offset_reg) = &offset.body
                             && let Body::Imm(shift) = &shift.body
                         {
-                            // TODO: validate (somewhere) that shift is 0..=3
+                            if *shift > 3 {
+                                Err(format!(
+                                    "index stride {} isn't encodable; only 1, 2, 4 and 8 are",
+                                    1u64 << shift
+                                ))?;
+                            }
                             write!(self.w, "[")?;
                             write_reg(*lhs_reg, self.w)?;
                             write!(self.w, ", ")?;
@@ -644,7 +649,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                             Err("must be register left shifted by immediate")?;
                         }
                     }
-                    _ => todo!(),
+                    Body::Binop(_, BinOp::Mul, stride) => {
+                        if let Body::Imm(n) = stride.body {
+                            Err(format!(
+                                "index stride {n} isn't encodable; only 1, 2, 4 and 8 are, so compute the offset first"
+                            ))?;
+                        }
+                        Err("an index must be a register times a constant")?;
+                    }
+                    _ => Err("unsupported address offset")?,
                 }
             }
             _ => Err("unsupported address expression")?,
