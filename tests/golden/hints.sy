@@ -1,0 +1,26 @@
+fn wait(p: *u32) {
+    loop {
+        x @r1 = *p
+        if x != 0 goto end
+        wfe
+        goto loop
+    }
+    dmb
+    dsb
+    isb
+    sev
+    wfi
+    nop
+    #(x - 1)
+    if #eq {
+        wfe
+    }
+    bx lr
+}
+
+// Hint names are still usable as variables.
+fn vars(nop: u32) {
+    nop += 1
+    sev @r1 = nop
+    bx lr
+}

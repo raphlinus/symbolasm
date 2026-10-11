@@ -29,4 +29,7 @@ pub enum Insn {
     Pop(Vec<Expr>),
     /// cpsie/cpsid, with the interrupt mask flags (`i` and/or `f`)
     Cps(bool, String),
+    /// Instructions with no operands: hints (`wfe`, `wfi`, `sev`, `nop`)
+    /// and barriers (`dmb`, `dsb`, `isb`)
+    NoOperand(String),
 }

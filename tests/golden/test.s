@@ -12,13 +12,13 @@ main:
     asr r3, r1, #1
     add r3, r3, r1
     cmp r3, #4
-loop:
+.Lmain.loop:
     subs r1, r1, #1
     ite eq
     moveq r1, #0
     movne r1, #1
     mov r2, r1
-    bne loop
+    bne .Lmain.loop
     eor r1, r2, r3
     orr r1, r2, r3
     and r1, r2, r3
@@ -56,15 +56,15 @@ tuples:
 .thumb_func
 list_len:
     mov r1, #0
-    cbz r0, done
-loop2:
+    cbz r0, .Llist_len.done
+.Llist_len.loop2:
     ldr r2, [r0, #0]
     add r2, r2, #1
     str r2, [r0, #0]
     ldr r0, [r0, #4]
     add r1, r1, #1
     cmp r0, #0
-    bne loop2
-done:
+    bne .Llist_len.loop2
+.Llist_len.done:
     mov r0, r1
     bx lr

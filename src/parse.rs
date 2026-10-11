@@ -415,6 +415,11 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                         _ => unreachable!(),
                     });
                 }
+                "wfe" | "wfi" | "sev" | "nop" | "dmb" | "dsb" | "isb" => {
+                    toks.expect(&TokBody::Newline)
+                        .map_err(|_| format!("{ident} takes no operands"))?;
+                    return Ok(Stmt::Insn(Insn::NoOperand(ident)));
+                }
                 "if" => return parse_if(toks),
                 "goto" => {
                     let label = parse_label(toks)?;

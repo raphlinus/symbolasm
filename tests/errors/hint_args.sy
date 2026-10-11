@@ -1,0 +1,5 @@
+// error: wfe takes no operands
+fn f() {
+    wfe i
+    bx lr
+}

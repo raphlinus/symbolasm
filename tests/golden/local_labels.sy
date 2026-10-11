@@ -1,0 +1,15 @@
+// Named labels are local to their function, so two functions can both
+// use `done`. A goto to a name that isn't a label here is a tail call.
+fn f(a: u32) {
+    if a == 0 goto done
+    a = 1
+done:
+    bx lr
+}
+
+fn g(a: u32) {
+    if a == 0 goto done
+    goto f
+done:
+    bx lr
+}

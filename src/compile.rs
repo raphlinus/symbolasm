@@ -5,7 +5,7 @@ use std::{collections::HashMap, io::Write};
 
 use crate::{
     error::{Error, WithLoc},
-    generate::GenCtx,
+    generate::{GenCtx, LocalLabels},
     globals::Globals,
     ifthen,
     ir::IrCtx,
@@ -176,6 +176,10 @@ impl FnScope {
             writeln!(w, "{name}:")?;
             // might also consider .function / .endfunc; but this
         }
+        let labels = LocalLabels {
+            fn_name: func.name.as_ident().unwrap_or_default(),
+            labels: &self.labels,
+        };
         let type_inf_ctx = TypeInferCtx::new(types, globals);
         let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
@@ -201,7 +205,7 @@ impl FnScope {
                     })
                 } else {
                     let mut gen_ctx = GenCtx::new(types, w);
-                    gen_ctx.gen_stmt(stmt, &regmap, if_state)
+                    gen_ctx.gen_stmt(stmt, &regmap, &labels, if_state)
                 };
                 result.at(&func.locs[ix])?;
                 regmap.apply(stmt);
@@ -232,7 +236,9 @@ fn analyze_branch(stmt: &Stmt) -> (BranchKind, Option<&str>) {
             Insn::Pop(regs) if regs.iter().any(|r| r.as_ident() == Some("pc")) => {
                 (BranchKind::UncondBranch, None)
             }
-            Insn::Push(_) | Insn::Pop(_) | Insn::Cps(_, _) => (BranchKind::NotBranch, None),
+            Insn::Push(_) | Insn::Pop(_) | Insn::Cps(_, _) | Insn::NoOperand(_) => {
+                (BranchKind::NotBranch, None)
+            }
         }
     } else {
         (BranchKind::NotBranch, None)

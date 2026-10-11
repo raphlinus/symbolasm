@@ -31,9 +31,9 @@ branch_named_vars:
     mov r1, r0
     add r1, r1, #1
     mov r2, r1
-    cbz r2, out
+    cbz r2, .Lbranch_named_vars.out
     mov r0, r2
-out:
+.Lbranch_named_vars.out:
     bx lr
 .section .text
 .global slices

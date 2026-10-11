@@ -6,7 +6,7 @@
 //! This approach is clunky, and is going to run into problems when types are
 //! needed.
 
-use std::{io::Write, ops::Deref};
+use std::{borrow::Cow, collections::HashMap, io::Write, ops::Deref};
 
 use crate::{
     error::Error,
@@ -17,6 +17,27 @@ use crate::{
     stmt::Stmt,
     types::{Type, TypeHandle, TypePool},
 };
+
+/// The labels defined in a function, which are local to it.
+pub struct LocalLabels<'a> {
+    pub fn_name: &'a str,
+    pub labels: &'a HashMap<String, usize>,
+}
+
+impl LocalLabels<'_> {
+    /// The assembler name for a label or branch target. Labels defined in
+    /// the function become `.L<fn>.<label>`, so they don't collide across
+    /// functions or leave symbols in the object file. Other targets (other
+    /// functions, for a tail call) and block labels, which are already
+    /// local, pass through.
+    fn asm_name<'s>(&self, label: &'s str) -> Cow<'s, str> {
+        if !label.starts_with(".L") && self.labels.contains_key(label) {
+            format!(".L{}.{label}", self.fn_name).into()
+        } else {
+            label.into()
+        }
+    }
+}
 
 pub struct GenCtx<'a, W: Write> {
     types: &'a mut TypePool,
@@ -635,11 +656,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
         &mut self,
         stmt: &Stmt,
         regmap: &Regmap,
+        labels: &LocalLabels,
         if_state: &IfState,
     ) -> Result<(), Error> {
         match stmt {
             Stmt::Label(l) => {
-                writeln!(self.w, "{l}:")?;
+                writeln!(self.w, "{}:", labels.asm_name(l))?;
             }
             Stmt::Insn(insn) => match insn {
                 crate::stmt::Insn::Bx(target) => {
@@ -655,11 +677,11 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 crate::stmt::Insn::BCond(cond, target) => {
                     let insn = format!("b{cond}");
                     self.start_insn(&insn, if_state)?;
-                    writeln!(self.w, " {target}")?;
+                    writeln!(self.w, " {}", labels.asm_name(target))?;
                 }
                 crate::stmt::Insn::B(target) => {
                     self.start_insn("b", if_state)?;
-                    writeln!(self.w, " {target}")?;
+                    writeln!(self.w, " {}", labels.asm_name(target))?;
                 }
                 crate::stmt::Insn::Push(regs) => {
                     self.gen_reglist("push", regs, regmap, if_state)?
@@ -668,6 +690,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 crate::stmt::Insn::Cps(enable, flags) => {
                     self.start_insn(if *enable { "cpsie" } else { "cpsid" }, if_state)?;
                     writeln!(self.w, " {flags}")?;
+                }
+                crate::stmt::Insn::NoOperand(insn) => {
+                    if matches!(insn.as_str(), "dmb" | "dsb" | "isb")
+                        && !matches!(if_state, IfState::Default)
+                    {
+                        Err(format!("{insn} can't be conditional"))?;
+                    }
+                    self.start_insn(insn, if_state)?;
+                    writeln!(self.w)?;
                 }
                 crate::stmt::Insn::Bl(target) => {
                     self.start_insn("bl", if_state)?;
@@ -678,7 +709,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         self.start_insn("cbz", if_state)?;
                         write!(self.w, " ")?;
                         write_var_reg(id, regmap, self.w)?;
-                        writeln!(self.w, ", {target}")?;
+                        writeln!(self.w, ", {}", labels.asm_name(target))?;
                     } else {
                         Err("bx target must be register")?;
                     }
@@ -688,7 +719,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         self.start_insn("cbnz", if_state)?;
                         write!(self.w, " ")?;
                         write_var_reg(id, regmap, self.w)?;
-                        writeln!(self.w, ", {target}")?;
+                        writeln!(self.w, ", {}", labels.asm_name(target))?;
                     } else {
                         Err("bx target must be register")?;
                     }

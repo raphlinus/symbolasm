@@ -1,0 +1,8 @@
+// error: dmb can't be conditional
+fn f(a: u32) {
+    #(a - 1)
+    if #eq {
+        dmb
+    }
+    bx lr
+}
