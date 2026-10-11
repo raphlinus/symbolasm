@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global post_inc
+.type post_inc, %function
 .thumb_func
 post_inc:
     ldm r0!, {r3}
@@ -15,3 +16,4 @@ post_inc:
     ldm r0!, {r4, r5}
     stm r0!, {r4, r5}
     bx lr
+.size post_inc, . - post_inc

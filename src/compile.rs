@@ -179,9 +179,12 @@ impl FnScope {
                 None => writeln!(w, ".section .text")?,
             }
             writeln!(w, ".global {name}")?;
+            // Without a function type the symbol is NOTYPE, and linkers
+            // other than GNU ld (rust-lld, for one) then take its address
+            // without the Thumb bit, so calling through it faults.
+            writeln!(w, ".type {name}, %function")?;
             writeln!(w, ".thumb_func")?;
             writeln!(w, "{name}:")?;
-            // might also consider .function / .endfunc; but this
         }
         let labels = LocalLabels {
             fn_name: func.name.as_ident().unwrap_or_default(),
@@ -218,6 +221,9 @@ impl FnScope {
                 regmap.apply(stmt);
                 //_ = writeln!(w, "{ix}: {regmap:?}");
             }
+        }
+        if let Some(name) = func.name.as_ident() {
+            writeln!(w, ".size {name}, . - {name}")?;
         }
         Ok(())
     }

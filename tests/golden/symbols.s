@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global copy_data
+.type copy_data, %function
 .thumb_func
 copy_data:
     ldr r0, =_data_source
@@ -15,8 +16,10 @@ copy_data:
     bne .Lcopy_data.data_loop
     ldr r1, =_data_source
     bx lr
+.size copy_data, . - copy_data
 .section .text
 .global halves
+.type halves, %function
 .thumb_func
 halves:
     movw r0, #:lower16:_data_start
@@ -24,3 +27,4 @@ halves:
     mov r1, #22136
     movt r1, #4660
     bx lr
+.size halves, . - halves

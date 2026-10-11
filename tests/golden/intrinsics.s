@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global calls
+.type calls, %function
 .thumb_func
 calls:
     clz r2, r0
@@ -17,3 +18,4 @@ calls:
     pkhtb r2, r0, r1, asr #16
     rors r2, r0, #1
     bx lr
+.size calls, . - calls

@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global fill_16
+.type fill_16, %function
 .thumb_func
 fill_16:
     lsrs r3, r0, #2
@@ -42,3 +43,4 @@ fill_16:
     it cs
     strhcs r1, [r0]
     bx lr
+.size fill_16, . - fill_16

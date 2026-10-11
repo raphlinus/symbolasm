@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global index
+.type index, %function
 .thumb_func
 index:
     ldr r2, [r0, r1, lsl #2]
@@ -16,3 +17,4 @@ index:
     ldr r2, [r0, #8]
     add r0, r0, #12
     bx lr
+.size index, . - index

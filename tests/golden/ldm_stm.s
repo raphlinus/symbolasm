@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global copy
+.type copy, %function
 .thumb_func
 copy:
     ldm r0!, {r3}
@@ -12,3 +13,4 @@ copy:
     ldrh r2, [r0], #4
     ldr r3, [r0], #8
     bx lr
+.size copy, . - copy

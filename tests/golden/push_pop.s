@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global calls_out
+.type calls_out, %function
 .thumb_func
 calls_out:
     push {r4, lr}
@@ -10,16 +11,20 @@ calls_out:
     bl elsewhere
     mov r0, r4
     pop {r4, pc}
+.size calls_out, . - calls_out
 .section .text
 .global rename
+.type rename, %function
 .thumb_func
 rename:
     mov r2, r0
     sub r2, r2, #1
     add r2, r2, #1
     bx lr
+.size rename, . - rename
 .section .text
 .global rename_in_it
+.type rename_in_it, %function
 .thumb_func
 rename_in_it:
     cmp r0, #1
@@ -27,10 +32,13 @@ rename_in_it:
     moveq r0, r0
     movne r0, #2
     bx lr
+.size rename_in_it, . - rename_in_it
 .section .text
 .global irqs
+.type irqs, %function
 .thumb_func
 irqs:
     cpsid i
     cpsie i
     bx lr
+.size irqs, . - irqs

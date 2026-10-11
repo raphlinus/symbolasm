@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global wait
+.type wait, %function
 .thumb_func
 wait:
 .Lwait_0_loop:
@@ -21,10 +22,13 @@ wait:
     it eq
     wfeeq
     bx lr
+.size wait, . - wait
 .section .text
 .global vars
+.type vars, %function
 .thumb_func
 vars:
     add r0, r0, #1
     mov r1, r0
     bx lr
+.size vars, . - vars

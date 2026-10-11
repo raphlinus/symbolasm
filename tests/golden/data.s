@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global use_data
+.type use_data, %function
 .thumb_func
 use_data:
     ldr r1, =line
@@ -15,6 +16,7 @@ use_data:
     ldrb r2, [r1, #4]
     mov r3, #321
     bx lr
+.size use_data, . - use_data
 .section .bss
 .balign 4
 line:

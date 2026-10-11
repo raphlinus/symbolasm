@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global count_down
+.type count_down, %function
 .thumb_func
 count_down:
 .Lcount_down_0_loop:
@@ -10,8 +11,10 @@ count_down:
     bne .Lcount_down_0_loop
 .Lcount_down_0_end:
     bx lr
+.size count_down, . - count_down
 .section .text
 .global nested
+.type nested, %function
 .thumb_func
 nested:
 .Lnested_0_loop:
@@ -24,8 +27,10 @@ nested:
     bhs .Lnested_0_loop
 .Lnested_0_end:
     bx lr
+.size nested, . - nested
 .section .text
 .global choose
+.type choose, %function
 .thumb_func
 choose:
     cmp r0, #3
@@ -37,8 +42,10 @@ choose:
     mov r0, #2
 .Lchoose_0_end:
     bx lr
+.size choose, . - choose
 .section .text
 .global skip
+.type skip, %function
 .thumb_func
 skip:
 .Lskip_0_loop:
@@ -48,8 +55,10 @@ skip:
     str r0, [r0]
 .Lskip_0_end:
     bx lr
+.size skip, . - skip
 .section .text
 .global with_it
+.type with_it, %function
 .thumb_func
 with_it:
 .Lwith_it_0_loop:
@@ -59,3 +68,4 @@ with_it:
     bhi .Lwith_it_0_loop
 .Lwith_it_0_end:
     bx lr
+.size with_it, . - with_it

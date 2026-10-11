@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global main
+.type main, %function
 .thumb_func
 main:
     ldrsb r1, [r0]
@@ -35,8 +36,10 @@ main:
     bfc r1, #11, #6
     bfi r1, r2, #17, #4
     bx lr
+.size main, . - main
 .section .text
 .global tuples
+.type tuples, %function
 .thumb_func
 tuples:
     mov r1, #1
@@ -51,8 +54,10 @@ tuples:
     ldrd r3, r1, [r0]
     ldm r0, {r1, r4}
     add r1, r3, r4
+.size tuples, . - tuples
 .section .text
 .global list_len
+.type list_len, %function
 .thumb_func
 list_len:
     mov r1, #0
@@ -68,3 +73,4 @@ list_len:
 .Llist_len.done:
     mov r0, r1
     bx lr
+.size list_len, . - list_len

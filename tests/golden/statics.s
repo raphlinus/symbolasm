@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global bump
+.type bump, %function
 .thumb_func
 bump:
     ldr r0, =dvi
@@ -14,8 +15,10 @@ bump:
     add r3, r3, #1
     strh r3, [r2]
     bx lr
+.size bump, . - bump
 .section .text
 .global folding
+.type folding, %function
 .thumb_func
 folding:
     ldr r0, =34603264
@@ -23,8 +26,10 @@ folding:
     orr r2, r1, #65536
     ldr r3, =1073971252
     bx lr
+.size folding, . - folding
 .section .text
 .global compound
+.type compound, %function
 .thumb_func
 compound:
     and r0, r0, r1
@@ -34,6 +39,7 @@ compound:
     lsr r0, r0, r1
     bic r0, r0, r1
     bx lr
+.size compound, . - compound
 .section .bss
 .balign 4
 dvi:

@@ -3,6 +3,7 @@
 .thumb
 .section .text
 .global fit
+.type fit, %function
 .thumb_func
 fit:
     add r0, r0, #4095
@@ -19,3 +20,4 @@ fit:
     ldr r2, [r0, #-4]
     ldr r2, [r0, #4095]
     bx lr
+.size fit, . - fit
