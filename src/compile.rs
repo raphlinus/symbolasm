@@ -5,6 +5,7 @@ use std::{collections::HashMap, io::Write};
 
 use crate::{
     error::{Error, WithLoc},
+    flags,
     generate::{GenCtx, LocalLabels},
     globals::Globals,
     ifthen,
@@ -21,17 +22,18 @@ pub struct FnScope {
     // map from label name to stmt number
     labels: HashMap<String, usize>,
     basic_blocks: Vec<BasicBlock>,
+    /// Placements at the end of each basic block, parallel to basic_blocks
+    regmaps: Vec<Regmap>,
     basic_block_starts: HashMap<usize, usize>,
 }
 
 #[derive(Debug)]
-struct BasicBlock {
+pub struct BasicBlock {
     // stmt numbers
-    start: usize,
-    end: usize,
-    pred: Vec<usize>,
-    succ: Vec<usize>,
-    regmap: Regmap,
+    pub start: usize,
+    pub end: usize,
+    pub pred: Vec<usize>,
+    pub succ: Vec<usize>,
 }
 
 impl FnScope {
@@ -48,7 +50,7 @@ impl FnScope {
         // Find all the basic blocks
         // Basic block 0 is function start
         self.start_basic_block(0);
-        self.basic_blocks[0].regmap.init_from_args(&func.args);
+        self.regmaps[0].init_from_args(&func.args);
 
         self.start_basic_block(0);
         self.add_edge(0, 1);
@@ -95,10 +97,10 @@ impl FnScope {
         }
 
         // build register maps
-        for block in &mut self.basic_blocks[1..] {
+        for (block, regmap) in self.basic_blocks[1..].iter().zip(&mut self.regmaps[1..]) {
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
-                block.regmap.apply(stmt);
+                regmap.apply(stmt);
             }
         }
 
@@ -118,13 +120,13 @@ impl FnScope {
             for i in 0..n_succ {
                 let succ = self.basic_blocks[node].succ[i];
                 if node != succ {
-                    let (lo, hi) = self.basic_blocks.split_at_mut(node.max(succ));
+                    let (lo, hi) = self.regmaps.split_at_mut(node.max(succ));
                     let (n, s) = if node < succ {
                         (&lo[node], &mut hi[0])
                     } else {
                         (&hi[0], &mut lo[succ])
                     };
-                    if s.regmap.intersect_pred(&n.regmap) {
+                    if s.intersect_pred(n) {
                         queue.push(succ);
                     }
                 }
@@ -147,12 +149,12 @@ impl FnScope {
     fn start_basic_block(&mut self, start: usize) {
         self.basic_block_starts
             .insert(start, self.basic_blocks.len());
+        self.regmaps.push(Regmap::default());
         self.basic_blocks.push(BasicBlock {
             start,
             end: 0,
             pred: vec![],
             succ: vec![],
-            regmap: Regmap::default(),
         });
     }
 
@@ -193,12 +195,13 @@ impl FnScope {
         let type_inf_ctx = TypeInferCtx::new(types, globals);
         let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
+        let live_flags = flags::live_after(&func.body, &if_analysis, &self.basic_blocks);
         //println!("{if_analysis:?}");
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
-                let mut regmap = self.basic_blocks[*pred].regmap.clone();
+                let mut regmap = self.regmaps[*pred].clone();
                 for ix in tail {
-                    regmap.intersect(&self.basic_blocks[*ix].regmap);
+                    regmap.intersect(&self.regmaps[*ix]);
                 }
                 regmap
             } else {
@@ -211,6 +214,7 @@ impl FnScope {
                     let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, globals);
                     ir_ctx.lower(stmt).and_then(|ir| {
                         let mut gen_ctx = GenCtx::new(types, w);
+                        gen_ctx.set_live_flags(live_flags[ix]);
                         gen_ctx.gen_from_ir(&ir, if_state)
                     })
                 } else {

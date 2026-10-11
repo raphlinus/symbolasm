@@ -28,7 +28,7 @@ wait:
 .type vars, %function
 .thumb_func
 vars:
-    add r0, r0, #1
+    adds r0, r0, #1
     mov r1, r0
     bx lr
 .size vars, . - vars

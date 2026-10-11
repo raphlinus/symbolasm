@@ -12,7 +12,7 @@ bump:
     str r1, [r0, #4]
     ldr r2, =counter
     ldrh r3, [r2]
-    add r3, r3, #1
+    adds r3, r3, #1
     strh r3, [r2]
     bx lr
 .size bump, . - bump
@@ -32,12 +32,12 @@ folding:
 .type compound, %function
 .thumb_func
 compound:
-    and r0, r0, r1
+    ands r0, r0, r1
     orr r0, r0, #16
-    eor r0, r0, r1
-    lsl r0, r0, #2
-    lsr r0, r0, r1
-    bic r0, r0, r1
+    eors r0, r0, r1
+    lsls r0, r0, #2
+    lsrs r0, r0, r1
+    bics r0, r0, r1
     bx lr
 .size compound, . - compound
 .section .bss

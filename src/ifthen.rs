@@ -100,7 +100,7 @@ impl Cond {
         }
     }
 
-    fn parse(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "eq" => Some(Cond::Eq),
             "ne" => Some(Cond::Ne),

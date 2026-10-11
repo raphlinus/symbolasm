@@ -10,8 +10,8 @@ main:
     strh r1, [r0]
     strb r1, [r0], #8
     ldrsb r1, [r0], #-8
-    asr r3, r1, #1
-    add r3, r3, r1
+    asrs r3, r1, #1
+    adds r3, r3, r1
     cmp r3, #4
 .Lmain.loop:
     subs r1, r1, #1
@@ -23,12 +23,12 @@ main:
     eor r1, r2, r3
     orr r1, r2, r3
     and r1, r2, r3
-    lsl r1, r2, #1
-    asr r1, r2, #1
-    asr r1, r2, #1
-    rsb r1, r2, #0
-    mvn r1, r2
-    mov r1, #1
+    lsls r1, r2, #1
+    asrs r1, r2, #1
+    asrs r1, r2, #1
+    rsbs r1, r2, #0
+    mvns r1, r2
+    movs r1, #1
     add r1, r2, r2, lsl #1
     add r1, r2, r2, asr #1
     add r1, r2, r2, asr #1
@@ -42,8 +42,8 @@ main:
 .type tuples, %function
 .thumb_func
 tuples:
-    mov r1, #1
-    mov r2, #2
+    movs r1, #1
+    movs r2, #2
     stm r0!, {r1, r2}
     stm r0, {r1, r2}
     strd r2, r2, [r0]
@@ -53,21 +53,21 @@ tuples:
     ldm r0!, {r1, r2}
     ldrd r3, r1, [r0]
     ldm r0, {r1, r4}
-    add r1, r3, r4
+    adds r1, r3, r4
 .size tuples, . - tuples
 .section .text
 .global list_len
 .type list_len, %function
 .thumb_func
 list_len:
-    mov r1, #0
+    movs r1, #0
     cbz r0, .Llist_len.done
 .Llist_len.loop2:
     ldr r2, [r0, #0]
-    add r2, r2, #1
+    adds r2, r2, #1
     str r2, [r0, #0]
     ldr r0, [r0, #4]
-    add r1, r1, #1
+    adds r1, r1, #1
     cmp r0, #0
     bne .Llist_len.loop2
 .Llist_len.done:

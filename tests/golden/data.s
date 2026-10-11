@@ -9,7 +9,7 @@ use_data:
     ldr r1, =line
     ldr r2, [r1, r0, lsl #2]
     mov r3, #321
-    mov r3, #24
+    movs r3, #24
     mov r3, #1292
     ldr r3, magic
     ldr r1, =pairs

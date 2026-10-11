@@ -1,0 +1,52 @@
+// Flag-setting forms (16 bit encodings) are used only where the flags
+// they write are dead.
+fn dead(a: u32, b: u32, p: *u32) {
+    x @r3 = 5
+    x += 1
+    x = a + b
+    x = a >> 3
+    x = a[24..32]
+    a &= b
+    b = a & b
+    a = -b
+    a = !b
+    bx lr
+}
+
+fn live(a: u32, b: u32) {
+    loop {
+        #(a -= 1)
+        // Z is read by the branch, so these keep their 32 bit forms
+        x @r3 = 5
+        b += 1
+        y @r12 = 7
+        if #ne goto loop
+    }
+    // C and Z are read by hi; adds would also write V, which is dead, but
+    // it still writes C and Z
+    #(a - 3)
+    b += 2
+    if #hi goto done
+    // movs writes only N and Z, so it's fine before a carry test
+    #(a - 3)
+    x @r3 = 1
+    if #cs goto done
+    // inside an IT block the 16 bit forms don't set flags
+    #(a - 3)
+    if #eq {
+        b += 1
+    }
+    // a call clobbers the flags, so they're dead before it
+    #(a - 3)
+    b = 1
+    bl other
+done:
+    bx lr
+}
+
+// Flags are dead at a return; high registers have no 16 bit forms
+fn high(a: u32) {
+    x @r8 = 5
+    a = a + 1
+    bx lr
+}

@@ -15,9 +15,9 @@ div:
 .type tuple3, %function
 .thumb_func
 tuple3:
-    mov r1, #1
-    mov r2, #2
-    mov r3, #3
+    movs r1, #1
+    movs r2, #2
+    movs r3, #3
     stm r0, {r1, r2, r3}
     ldm r0!, {r1, r2, r3}
     bx lr
@@ -36,7 +36,7 @@ assoc:
 .thumb_func
 branch_named_vars:
     mov r1, r0
-    add r1, r1, #1
+    adds r1, r1, #1
     mov r2, r1
     cbz r2, .Lbranch_named_vars.out
     mov r0, r2
@@ -58,6 +58,6 @@ slices:
 .thumb_func
 placed_flags:
     adds r2, r0, r1
-    add r2, r2, #1
+    adds r2, r2, #1
     bx lr
 .size placed_flags, . - placed_flags

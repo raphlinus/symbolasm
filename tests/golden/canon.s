@@ -11,10 +11,10 @@ index:
     ldr r3, [r0, r1, lsl #2]
     ldrh r2, [r0, r1, lsl #1]
     ldrb r3, [r0, r1]
-    lsl r3, r1, #3
-    lsl r3, r1, #1
+    lsls r3, r1, #3
+    lsls r3, r1, #1
     and r3, r1, #255
     ldr r2, [r0, #8]
-    add r0, r0, #12
+    adds r0, r0, #12
     bx lr
 .size index, . - index

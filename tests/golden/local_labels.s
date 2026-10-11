@@ -7,7 +7,7 @@
 .thumb_func
 f:
     cbz r0, .Lf.done
-    mov r0, #1
+    movs r0, #1
 .Lf.done:
     bx lr
 .size f, . - f

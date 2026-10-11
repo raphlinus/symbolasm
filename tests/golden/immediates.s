@@ -8,7 +8,7 @@
 fit:
     add r0, r0, #4095
     sub r0, r0, #4096
-    add r0, r0, #16
+    adds r0, r0, #16
     bic r1, r0, #255
     bic r1, r0, #255
     orn r1, r0, #1

@@ -19,6 +19,7 @@ mod compile;
 mod consts;
 mod data;
 mod error;
+mod flags;
 mod generate;
 mod globals;
 mod ifthen;

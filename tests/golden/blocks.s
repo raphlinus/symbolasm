@@ -18,7 +18,7 @@ count_down:
 .thumb_func
 nested:
 .Lnested_0_loop:
-    mov r1, #10
+    movs r1, #10
 .Lnested_1_loop:
     subs r1, r1, #1
     bne .Lnested_1_loop
@@ -36,10 +36,10 @@ choose:
     cmp r0, #3
 .Lchoose_0_loop:
     blo .Lchoose_0_else
-    mov r0, #1
+    movs r0, #1
     b .Lchoose_0_end
 .Lchoose_0_else:
-    mov r0, #2
+    movs r0, #2
 .Lchoose_0_end:
     bx lr
 .size choose, . - choose

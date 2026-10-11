@@ -10,6 +10,7 @@ use std::{borrow::Cow, collections::HashMap, io::Write, ops::Deref};
 
 use crate::{
     error::Error,
+    flags,
     ifthen::IfState,
     ir::{Assign, BinOp, Body, Expr, Half, Ir, UnaryOp},
     lex::{TokBody, Token},
@@ -42,6 +43,8 @@ impl LocalLabels<'_> {
 pub struct GenCtx<'a, W: Write> {
     types: &'a mut TypePool,
     w: &'a mut W,
+    /// Flags read after this statement, from `flags::live_after`.
+    live_flags: u8,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -53,7 +56,36 @@ enum WithFlags {
 
 impl<'a, W: Write> GenCtx<'a, W> {
     pub fn new(types: &'a mut TypePool, w: &'a mut W) -> Self {
-        Self { types, w }
+        Self {
+            types,
+            w,
+            live_flags: flags::NZCV,
+        }
+    }
+
+    pub fn set_live_flags(&mut self, live_flags: u8) {
+        self.live_flags = live_flags;
+    }
+
+    /// Whether to use the flag-setting form of an instruction, for its 16
+    /// bit encoding: flags are don't-care here, and the ones it writes are
+    /// dead.
+    /// Like `narrow`, but leaves an explicit Yes or No as it is. `writes`
+    /// is 0xff when there's no 16 bit flag-setting encoding.
+    fn narrow_or(&self, with_flags: WithFlags, writes: u8) -> WithFlags {
+        match with_flags {
+            WithFlags::DontCare if writes != 0xff => self.narrow(with_flags, writes),
+            WithFlags::DontCare => WithFlags::No,
+            _ => with_flags,
+        }
+    }
+
+    fn narrow(&self, with_flags: WithFlags, writes: u8) -> WithFlags {
+        if with_flags == WithFlags::DontCare && writes & self.live_flags == 0 {
+            WithFlags::Yes
+        } else {
+            WithFlags::No
+        }
     }
 
     pub fn gen_from_ir(&mut self, ir: &Ir, if_state: &IfState) -> Result<(), Error> {
@@ -75,7 +107,19 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         ..
                     },
                 rhs,
-            } => self.gen_assign_reg(*lhs, rhs, (*with_flags).into(), if_state),
+            } => {
+                // Outside an IT block, flags not explicitly set are
+                // don't-care; inside one, the 16 bit encodings are the
+                // ones that don't set flags.
+                let with_flags = if *with_flags {
+                    WithFlags::Yes
+                } else if matches!(if_state, IfState::Default) {
+                    WithFlags::DontCare
+                } else {
+                    WithFlags::No
+                };
+                self.gen_assign_reg(*lhs, rhs, with_flags, if_state)
+            }
             Assign {
                 with_flags: _,
                 lhs:
@@ -145,6 +189,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // falls back to ldr
                 // movs has no 16 bit immediate form
                 let imm16_ok = *n < 0x1_0000 && with_flags != WithFlags::Yes;
+                let with_flags = if *n < 0x100 && lhs < 8 {
+                    // movs rd, #imm8
+                    match with_flags {
+                        WithFlags::DontCare => self.narrow(with_flags, flags::NZ),
+                        _ => with_flags,
+                    }
+                } else if with_flags == WithFlags::DontCare {
+                    WithFlags::No
+                } else {
+                    with_flags
+                };
                 if imm16_ok || is_imm8m(*n) {
                     self.start_insn_flags("mov", with_flags, if_state)?;
                     write!(self.w, " ")?;
@@ -196,6 +251,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
             }
             Body::Unary(UnaryOp::Neg, rhs) => {
                 if let Body::Reg(r) = &rhs.body {
+                    // negs rd, rn
+                    let with_flags = if lhs < 8 && *r < 8 {
+                        self.narrow_or(with_flags, flags::NZCV)
+                    } else {
+                        self.narrow_or(with_flags, 0xff)
+                    };
                     self.start_insn_flags("rsb", with_flags, if_state)?;
                     write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
@@ -207,6 +268,12 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 }
             }
             Body::Unary(UnaryOp::Not, rhs) => {
+                // mvns rd, rm
+                let writes = match rhs.body {
+                    Body::Reg(r) if lhs < 8 && r < 8 => flags::NZ,
+                    _ => 0xff,
+                };
+                let with_flags = self.narrow_or(with_flags, writes);
                 self.start_insn_flags("mvn", with_flags, if_state)?;
                 write!(self.w, " ")?;
                 write_reg(lhs, self.w)?;
@@ -215,6 +282,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 writeln!(self.w)?;
             }
             Body::Intrinsic(insn, args) => {
+                let with_flags = self.narrow_or(with_flags, 0xff);
                 self.gen_intrinsic(lhs, insn, args, with_flags, if_state)?
             }
             // The address of a static's field, resolved by the linker
@@ -251,6 +319,42 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         body: Body::Imm(fit_n),
                     };
                     rhs = &fitted;
+                }
+                // The 16 bit flag-setting encodings: low registers, and for
+                // the logical ops and register shifts, rd the same as rn.
+                // A commutative op with rd the same as rm is swapped to fit.
+                let mut a = a.deref();
+                let rn = if let Body::Reg(r) = a.body { r } else { 0xff };
+                let commutative = matches!(insn, "and" | "orr" | "eor");
+                let low = lhs < 8 && rn < 8;
+                let writes = match (insn, &rhs.body) {
+                    ("add" | "sub", Body::Imm(n))
+                        if low && (*n <= 7 || (lhs == rn && *n <= 255)) =>
+                    {
+                        flags::NZCV
+                    }
+                    ("add" | "sub", Body::Reg(rm)) if low && *rm < 8 => flags::NZCV,
+                    ("and" | "orr" | "eor" | "bic", Body::Reg(rm)) if low && *rm < 8 => {
+                        if lhs == rn || (commutative && lhs == *rm) {
+                            flags::NZ
+                        } else {
+                            0xff
+                        }
+                    }
+                    ("lsl" | "lsr" | "asr", Body::Imm(_)) if low => flags::NZC,
+                    ("lsl" | "lsr" | "asr", Body::Reg(rm)) if low && lhs == rn && *rm < 8 => {
+                        flags::NZC
+                    }
+                    _ => 0xff,
+                };
+                let with_flags = self.narrow_or(with_flags, writes);
+                if with_flags == WithFlags::Yes
+                    && commutative
+                    && lhs != rn
+                    && let Body::Reg(rm) = rhs.body
+                    && rm == lhs
+                {
+                    std::mem::swap(&mut a, &mut rhs);
                 }
                 self.start_insn_flags(insn, with_flags, if_state)?;
                 write!(self.w, " ")?;
@@ -298,7 +402,22 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     (0, 16, true) => Some("sxth"),
                     _ => None,
                 };
-                if let Body::Reg(r) = &a.body {
+                if let Body::Reg(r) = &a.body
+                    && *start > 0
+                    && *end == 32
+                    && lhs < 8
+                    && *r < 8
+                    && self.narrow(with_flags, flags::NZC) == WithFlags::Yes
+                {
+                    // y[n..32] is y >> n, and lsrs/asrs have 16 bit encodings
+                    let insn = if signed { "asrs" } else { "lsrs" };
+                    self.start_insn(insn, if_state)?;
+                    write!(self.w, " ")?;
+                    write_reg(lhs, self.w)?;
+                    write!(self.w, ", ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w, ", #{start}")?;
+                } else if let Body::Reg(r) = &a.body {
                     let insn = extend.unwrap_or(if signed { "sbfx" } else { "ubfx" });
                     self.start_insn(insn, if_state)?;
                     write!(self.w, " ")?;

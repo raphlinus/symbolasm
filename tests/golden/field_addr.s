@@ -8,7 +8,7 @@
 fields:
     add r2, r0, #28
     ldr r3, [r2, r1, lsl #2]
-    add r2, r0, #4
+    adds r2, r0, #4
     ldr r3, [r2, #4]
     add r2, r0, #12
     mov r2, r0

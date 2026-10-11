@@ -18,8 +18,8 @@ calls_out:
 .thumb_func
 rename:
     mov r2, r0
-    sub r2, r2, #1
-    add r2, r2, #1
+    subs r2, r2, #1
+    adds r2, r2, #1
     bx lr
 .size rename, . - rename
 .section .text
