@@ -6,7 +6,7 @@ use std::io::Write;
 use clap::Parser;
 
 use crate::{
-    compile::FnScope,
+    compile::{FnScope, section_directive},
     error::{Error, WithLoc, report_error},
     globals::Globals,
     lex::tokenize,
@@ -125,7 +125,10 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             if info.size() == 0 {
                 return Err(format!("static {name} has zero size").into()).at(&s.name.loc);
             }
-            writeln!(w, ".section .bss")?;
+            match &s.link_section {
+                Some(section) => writeln!(w, "{}", section_directive(section, name, false))?,
+                None => writeln!(w, ".section .bss")?,
+            }
             writeln!(w, ".balign {}", info.align())?;
             writeln!(w, "{name}:")?;
             writeln!(w, "    .space {}", info.size())?;

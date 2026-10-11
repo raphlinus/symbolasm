@@ -27,6 +27,7 @@ pub enum Item {
 pub struct StaticDecl {
     pub name: Token,
     pub ty: Type,
+    pub link_section: Option<String>,
 }
 
 /// A symbol satisfied by the linker: `symbol name: type`.
@@ -41,6 +42,7 @@ pub struct SymbolDecl {
 #[derive(Debug)]
 pub struct Function {
     pub name: Token,
+    pub link_section: Option<String>,
     pub args: Args,
     pub body: Vec<Stmt>,
     /// Location of the first token of each statement, parallel to `body`.
@@ -90,19 +92,37 @@ pub struct Field {
 
 pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
     let mut items = vec![];
+    // An attribute applies to the next item
+    let mut link_section: Option<(String, Loc)> = None;
     while let Some(tok) = toks.next() {
         if tok.tok == TokBody::Newline {
             continue;
         }
         let loc = tok.loc.clone();
+        if tok.tok == TokBody::Octothorpe {
+            let section = parse_link_section(toks).at(&loc)?;
+            if link_section.is_some() {
+                return Err("duplicate link_section".into()).at(&loc);
+            }
+            link_section = Some((section, loc));
+            continue;
+        }
+        let is_fn_or_static = tok.match_str("fn") || tok.match_str("static");
+        if let Some((_, attr_loc)) = &link_section
+            && !is_fn_or_static
+        {
+            return Err("link_section only applies to fn and static".into()).at(attr_loc);
+        }
         if tok.match_str("fn") {
-            let f = parse_function(toks).at(&loc)?;
+            let mut f = parse_function(toks).at(&loc)?;
+            f.link_section = link_section.take().map(|(s, _)| s);
             items.push(Item::Function(f));
         } else if tok.match_str("struct") {
             let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
         } else if tok.match_str("static") {
-            let s = parse_static(toks).at(&loc)?;
+            let mut s = parse_static(toks).at(&loc)?;
+            s.link_section = link_section.take().map(|(s, _)| s);
             items.push(Item::Static(s));
         } else if tok.match_str("symbol") {
             let e = parse_symbol(toks).at(&loc)?;
@@ -111,7 +131,31 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
             return Err("expected fn, struct, static or symbol".into()).at(&loc);
         }
     }
+    if let Some((_, attr_loc)) = link_section {
+        return Err("link_section must be followed by fn or static".into()).at(&attr_loc);
+    }
     Ok(Program(items))
+}
+
+// Note: "#" has already been consumed
+fn parse_link_section(toks: &mut TokBuf) -> Result<String, Error> {
+    toks.expect(&TokBody::OpenBracket)?;
+    if !toks.next().is_some_and(|t| t.match_str("link_section")) {
+        Err("the only attribute is #[link_section = \"name\"]")?;
+    }
+    toks.expect(&TokBody::Equals)?;
+    let Some(TokBody::Str(section)) = toks.next().map(|t| t.tok.clone()) else {
+        return Err("expected section name string")?;
+    };
+    toks.expect(&TokBody::CloseBracket)?;
+    toks.expect(&TokBody::Newline)?;
+    let valid = section
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'$'));
+    if section.is_empty() || !valid {
+        Err(format!("invalid section name {section:?}"))?;
+    }
+    Ok(section)
 }
 
 // Note: "fn" keyword has already been consumed
@@ -125,6 +169,7 @@ fn parse_function(toks: &mut TokBuf) -> Result<Function, Error> {
     let (body, locs) = parse_body(toks, name.as_ident().unwrap())?;
     Ok(Function {
         name,
+        link_section: None,
         args,
         body,
         locs,
@@ -645,7 +690,11 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
     toks.expect(&TokBody::Colon)?;
     let ty = parse_type(toks)?;
     toks.expect(&TokBody::Newline)?;
-    Ok(StaticDecl { name, ty })
+    Ok(StaticDecl {
+        name,
+        ty,
+        link_section: None,
+    })
 }
 
 // Note: "symbol" keyword has already been consumed

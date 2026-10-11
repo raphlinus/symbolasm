@@ -169,8 +169,15 @@ impl FnScope {
         w: &mut impl Write,
     ) -> Result<(), Error> {
         if let Some(name) = func.name.as_ident() {
-            // section should be controllable
-            writeln!(w, ".section .text")?;
+            match &func.link_section {
+                Some(section) => {
+                    writeln!(w, "{}", section_directive(section, name, true))?;
+                    // A new section starts out byte aligned, and Thumb code
+                    // needs at least 2; 4 keeps 32 bit fetches aligned.
+                    writeln!(w, ".balign 4")?;
+                }
+                None => writeln!(w, ".section .text")?,
+            }
             writeln!(w, ".global {name}")?;
             writeln!(w, ".thumb_func")?;
             writeln!(w, "{name}:")?;
@@ -213,6 +220,26 @@ impl FnScope {
             }
         }
         Ok(())
+    }
+}
+
+/// The `.section` directive for an item with `#[link_section = "name"]`.
+///
+/// Each item gets its own section, `name.item`, as with
+/// `-ffunction-sections`, so linker scripts match it with `*(name.*)` and
+/// unused items can be dropped with `--gc-sections`. The assemblers infer
+/// flags from the standard prefixes, and GNU as warns when they're given
+/// explicitly (`.data.*` code is `"aw"`, not `"ax"`), so they're only
+/// spelled out for other names.
+pub fn section_directive(section: &str, item: &str, is_code: bool) -> String {
+    let standard = [".text", ".data", ".rodata", ".bss"]
+        .iter()
+        .any(|p| section == *p || section.starts_with(&format!("{p}.")));
+    if standard {
+        format!(".section {section}.{item}")
+    } else {
+        let flags = if is_code { "ax" } else { "aw" };
+        format!(".section {section}.{item},\"{flags}\",%progbits")
     }
 }
 

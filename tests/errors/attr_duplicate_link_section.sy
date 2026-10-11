@@ -1,0 +1,6 @@
+// error: duplicate link_section
+#[link_section = ".ram"]
+#[link_section = ".ram"]
+fn f() {
+    bx lr
+}

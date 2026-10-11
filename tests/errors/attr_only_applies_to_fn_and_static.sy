@@ -1,0 +1,5 @@
+// error: only applies to fn and static
+#[link_section = ".ram"]
+struct S {
+    a: u32
+}

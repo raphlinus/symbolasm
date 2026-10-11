@@ -1,0 +1,5 @@
+// error: invalid section name
+#[link_section = ".ram ax"]
+fn f() {
+    bx lr
+}

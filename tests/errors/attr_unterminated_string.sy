@@ -1,0 +1,5 @@
+// error: unterminated string
+#[link_section = ".ram]
+fn f() {
+    bx lr
+}

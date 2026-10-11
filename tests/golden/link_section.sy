@@ -1,0 +1,29 @@
+// Each item goes in its own section, name.item. Flags are spelled out
+// except for the standard prefixes, where the assembler infers them.
+struct Dvi {
+    v_scanline: u32
+    dma_pong: u32
+}
+
+#[link_section = ".ram"]
+fn dma_irq_0_handler() {
+    p @r0 = &dvi
+    pong @r1 = p.dma_pong
+    pong ^= 1
+    p.dma_pong = pong
+    bx lr
+}
+
+#[link_section = ".data"]
+fn in_data() {
+    bx lr
+}
+
+#[link_section = ".scratch_x"]
+static mut dvi: Dvi
+
+fn in_text() {
+    bx lr
+}
+
+static mut in_bss: u32

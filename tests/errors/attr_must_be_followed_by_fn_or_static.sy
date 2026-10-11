@@ -1,0 +1,5 @@
+// error: must be followed by fn or static
+fn f() {
+    bx lr
+}
+#[link_section = ".ram"]

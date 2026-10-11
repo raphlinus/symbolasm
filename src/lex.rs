@@ -22,6 +22,8 @@ pub enum TokBody {
     Newline,
     Identifier(String),
     Number(i64),
+    /// A string literal, without escapes
+    Str(String),
     Comma,
     Period,
     Semicolon,
@@ -162,6 +164,21 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 } else {
                     tokens.push(Token::new(loc, TokBody::Slash));
                 }
+            }
+            '"' => {
+                let rest = &src[ix + 1..];
+                let Some(end) = rest
+                    .find(['"', '\n'])
+                    .filter(|&e| rest.as_bytes()[e] == b'"')
+                else {
+                    return Err("unterminated string".into()).at(&loc);
+                };
+                let body = &rest[..end];
+                if body.contains('\\') {
+                    return Err("escapes in strings are not supported".into()).at(&loc);
+                }
+                tokens.push(Token::new(loc, TokBody::Str(body.into())));
+                len += end + 1;
             }
             '@' => tokens.push(Token::new(loc, TokBody::At)),
             '#' => tokens.push(Token::new(loc, TokBody::Octothorpe)),
