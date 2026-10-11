@@ -3,13 +3,40 @@ use crate::cpu::{Cpu, ShiftType};
 impl Cpu {
     pub fn step_instr(&mut self) {
         let inst_16 = self.load_u16(self.regs.r[15]);
-        println!("inst: {inst_16:04x}");
+        if self.trace {
+            println!("{:08x}: {inst_16:04x}", self.regs.r[15]);
+        }
+        // Inside an IT block, an instruction whose condition fails is
+        // skipped. ITSTATE advances after each instruction in the block.
+        if self.it_state != 0 {
+            let cond = (self.it_state >> 4) as u16;
+            let pass = self.eval_cond(cond);
+            if !pass {
+                let is_32 = inst_16 >> 11 >= 0x1d;
+                self.regs.r[15] += if is_32 { 4 } else { 2 };
+            } else {
+                self.regs.r[15] += 2;
+                self.dispatch(inst_16);
+            }
+            self.it_state = if self.it_state & 7 == 0 {
+                0
+            } else {
+                (self.it_state & 0xe0) | ((self.it_state << 1) & 0x1f)
+            };
+            return;
+        }
         self.regs.r[15] += 2;
+        self.dispatch(inst_16);
+    }
+
+    fn dispatch(&mut self, inst_16: u16) {
         match inst_16 >> 12 {
+            0x0 | 0x1 => self.inst_0(inst_16),
             0x2 => self.inst_2(inst_16),
             0x3 => self.inst_3(inst_16),
             0x4 => self.inst_4(inst_16),
             0x5 => self.inst_5(inst_16),
+            0x6 => self.inst_6(inst_16),
             0x7 => self.inst_7(inst_16),
             0x8 => self.inst_8(inst_16),
             0xa => self.inst_a(inst_16),
@@ -22,12 +49,77 @@ impl Cpu {
         }
     }
 
+    /// Shift (immediate), add, subtract: the 16 bit encodings with top
+    /// bits 000. They set flags outside an IT block.
+    fn inst_0(&mut self, inst: u16) {
+        let rd = (inst & 7) as usize;
+        let rn = ((inst >> 3) & 7) as usize;
+        let rrn = self.regs.r[rn];
+        let set = !self.in_it();
+        if inst >> 11 == 3 {
+            // ADD/SUB (register or 3 bit immediate), T1 encodings
+            let operand = if inst & 0x400 != 0 {
+                ((inst >> 6) & 7) as u32
+            } else {
+                self.regs.r[((inst >> 6) & 7) as usize]
+            };
+            self.regs.r[rd] = if inst & 0x200 == 0 {
+                self.add_flags(rrn, operand, 0, set)
+            } else {
+                self.add_flags(rrn, !operand, 1, set)
+            };
+            return;
+        }
+        let imm5 = ((inst >> 6) & 0x1f) as u32;
+        let (val, carry) = match inst >> 11 {
+            // LSL (immediate), imm5 0 is MOV (register) setting flags
+            0 if imm5 == 0 => (rrn, None),
+            0 => (rrn << imm5, Some((rrn >> (32 - imm5)) & 1)),
+            // LSR (immediate), imm5 0 means 32
+            1 => {
+                let n = if imm5 == 0 { 32 } else { imm5 };
+                (
+                    ((rrn as u64) >> n) as u32,
+                    Some(((rrn as u64) >> (n - 1)) as u32 & 1),
+                )
+            }
+            // ASR (immediate)
+            _ => {
+                let n = if imm5 == 0 { 32 } else { imm5 };
+                let v = rrn as i32 as i64;
+                ((v >> n) as u32, Some((v >> (n - 1)) as u32 & 1))
+            }
+        };
+        self.regs.r[rd] = val;
+        if set {
+            self.set_nz(val);
+            if let Some(c) = carry {
+                self.set_c(c);
+            }
+        }
+    }
+
+    // Load and store word (immediate), T1 encodings
+    fn inst_6(&mut self, inst: u16) {
+        let rt = (inst & 7) as usize;
+        let rn = ((inst >> 3) & 7) as usize;
+        let addr = self.regs.r[rn].wrapping_add(((inst >> 6) & 0x1f) as u32 * 4);
+        if inst & 0x800 == 0 {
+            self.store_u32(addr, self.regs.r[rt]);
+        } else {
+            self.regs.r[rt] = self.load_u32(addr);
+        }
+    }
+
     fn inst_2(&mut self, inst: u16) {
         let imm8 = (inst & 0xff) as u32;
         let rd = ((inst >> 8) & 7) as usize;
         if inst & 0x800 == 0 {
             // MOV (immediate, T1 encoding)
             self.regs.r[rd] = imm8;
+            if !self.in_it() {
+                self.set_nz(imm8);
+            }
         } else {
             // CMP (immediate, T1 encoding)
             _ = self.adc(self.regs.r[rd], !imm8, 1);
@@ -37,40 +129,107 @@ impl Cpu {
     fn inst_3(&mut self, inst: u16) {
         let imm8 = (inst & 0xff) as u32;
         let rd = ((inst >> 8) & 7) as usize;
+        let set = !self.in_it();
         if inst & 0x800 == 0 {
             // ADDS (immediate, T2 encoding)
-            self.regs.r[rd] = self.adc(self.regs.r[rd], imm8, 0);
+            self.regs.r[rd] = self.add_flags(self.regs.r[rd], imm8, 0, set);
         } else {
             // SUBS (immediate, T2 encoding)
-            self.regs.r[rd] = self.adc(self.regs.r[rd], !imm8, 1);
+            self.regs.r[rd] = self.add_flags(self.regs.r[rd], !imm8, 1, set);
         }
     }
 
     fn inst_4(&mut self, inst: u16) {
         if inst & 0xc00 == 0 {
+            // data processing, table 3-3; flags only outside an IT block
             let op = (inst >> 6) & 0xf;
             let rm = ((inst >> 3) & 7) as usize;
             let rdn = (inst & 7) as usize;
             let rrm = self.regs.r[rm];
             let rrn = self.regs.r[rdn];
-            let val = match op {
-                0 => rrn & rrm,  // ANDS
-                1 => rrn ^ rrm,  // EORS
-                12 => rrn | rrm, // ORRS
-                _ => todo!(),
+            let set = !self.in_it();
+            let carry_in = (self.regs.psr >> 29) & 1;
+            let logical = |cpu: &mut Self, val: u32, write: bool| {
+                if write {
+                    cpu.regs.r[rdn] = val;
+                }
+                if set || !write {
+                    cpu.set_nz(val);
+                }
             };
-            self.regs.r[rdn] = val;
-            self.set_nz(val);
+            match op {
+                0 => logical(self, rrn & rrm, true),              // ANDS
+                1 => logical(self, rrn ^ rrm, true),              // EORS
+                12 => logical(self, rrn | rrm, true),             // ORRS
+                14 => logical(self, rrn & !rrm, true),            // BICS
+                15 => logical(self, !rrm, true),                  // MVNS
+                13 => logical(self, rrn.wrapping_mul(rrm), true), // MULS
+                8 => logical(self, rrn & rrm, false),             // TST
+                2..=4 | 7 => {
+                    // LSLS, LSRS, ASRS, RORS (register)
+                    let n = rrm & 0xff;
+                    let (val, c) = match op {
+                        2 if n == 0 => (rrn, None),
+                        2 if n < 32 => (rrn << n, Some((rrn >> (32 - n)) & 1)),
+                        2 => (0, Some(if n == 32 { rrn & 1 } else { 0 })),
+                        3 if n == 0 => (rrn, None),
+                        3 if n <= 32 => (
+                            ((rrn as u64) >> n) as u32,
+                            Some(((rrn as u64) >> (n - 1)) as u32 & 1),
+                        ),
+                        3 => (0, Some(0)),
+                        4 if n == 0 => (rrn, None),
+                        4 => {
+                            let k = n.min(32);
+                            let v = rrn as i32 as i64;
+                            ((v >> k) as u32, Some((v >> (k - 1)) as u32 & 1))
+                        }
+                        _ if n == 0 => (rrn, None),
+                        _ => {
+                            let v = rrn.rotate_right(n % 32);
+                            (v, Some(v >> 31))
+                        }
+                    };
+                    self.regs.r[rdn] = val;
+                    if set {
+                        self.set_nz(val);
+                        if let Some(c) = c {
+                            self.set_c(c);
+                        }
+                    }
+                }
+                5 => self.regs.r[rdn] = self.add_flags(rrn, rrm, carry_in, set), // ADCS
+                6 => self.regs.r[rdn] = self.add_flags(rrn, !rrm, carry_in, set), // SBCS
+                9 => self.regs.r[rdn] = self.add_flags(0, !rrm, 1, set),         // RSBS #0
+                10 => _ = self.adc(rrn, !rrm, 1),                                // CMP
+                11 => _ = self.adc(rrn, rrm, 0),                                 // CMN
+                _ => unreachable!(),
+            }
         } else if inst & 0x800 == 0 {
             // special data processing + branch/exchange
-            if inst & 0xf00 == 0x600 {
-                // MOV (register, T1 encoding)
-                let rm = ((inst >> 3) & 0xf) as usize;
-                let rd = (((inst & 0x80) >> 4) | (inst & 7)) as usize;
-                let rrm = self.regs.r[rm];
-                self.regs.r[rd] = rrm;
-            } else {
-                todo!();
+            let rm = ((inst >> 3) & 0xf) as usize;
+            let rd = (((inst & 0x80) >> 4) | (inst & 7)) as usize;
+            let rrm = self.regs.r[rm];
+            match (inst >> 8) & 3 {
+                0 => {
+                    // ADD (register, T2 encoding)
+                    self.regs.r[rd] = self.regs.r[rd].wrapping_add(rrm);
+                }
+                1 => {
+                    // CMP (register, T2 encoding)
+                    _ = self.adc(self.regs.r[rd], !rrm, 1);
+                }
+                2 => {
+                    // MOV (register, T1 encoding)
+                    self.regs.r[rd] = rrm;
+                }
+                _ => {
+                    // BX, BLX (register)
+                    if inst & 0x80 != 0 {
+                        self.regs.r[14] = self.regs.r[15] | 1;
+                    }
+                    self.regs.r[15] = rrm & !1;
+                }
             }
         } else {
             // load from literal pool
@@ -182,7 +341,23 @@ impl Cpu {
                 let bkpt = inst as u8;
                 self.syscall(bkpt);
             }
-            _ => todo!(),
+            1 | 3 | 9 | 11 => {
+                // CBZ, CBNZ
+                let rn = (inst & 7) as usize;
+                let offset = (((inst >> 3) & 0x1f) | ((inst >> 4) & 0x20)) as u32 * 2;
+                let nonzero = inst & 0x800 != 0;
+                if (self.regs.r[rn] != 0) == nonzero {
+                    self.regs.r[15] = self.regs.r[15].wrapping_add(offset + 2);
+                }
+            }
+            15 => {
+                if inst & 0xf != 0 {
+                    // IT
+                    self.it_state = inst as u8;
+                }
+                // otherwise a hint (nop, wfe, sev, ...), which does nothing here
+            }
+            _ => todo!("inst {inst:04x} not implemented"),
         }
     }
 
@@ -217,7 +392,7 @@ impl Cpu {
         let cond = (inst >> 8) & 0xf;
         if self.eval_cond(cond) {
             let imm8 = inst as i8 as u32;
-            self.regs.r[15] = self.regs.r[15].wrapping_add(imm8 << 1).wrapping_add(4);
+            self.regs.r[15] = self.regs.r[15].wrapping_add(imm8 << 1).wrapping_add(2);
         }
     }
 
@@ -225,7 +400,7 @@ impl Cpu {
         if inst & 0x800 == 0 {
             // unconditional branch, T1 encoding
             let imm = (((inst as i32) << 21) >> 20) as u32;
-            self.regs.r[15] = self.regs.r[15].wrapping_add(imm).wrapping_add(4);
+            self.regs.r[15] = self.regs.r[15].wrapping_add(imm).wrapping_add(2);
         } else {
             // 32 bit instructions
             let inst_2 = self.load_u16(self.regs.r[15]);
@@ -238,24 +413,10 @@ impl Cpu {
                 let (shift_t, shift_n) = decode_imm_shift(inst_2);
                 let shifted = self.apply_imm_shift(self.regs.r[rm], shift_t, shift_n);
                 let op = (inst >> 5) & 0xf;
-                match op {
-                    2 => {
-                        // ORR (register, T2 encoding)
-                        self.regs.r[rd] = self.regs.r[rn] | shifted;
-                        // TODO: handle flags when S is set
-                    }
-                    4 => {
-                        // EOR (register, T2 encoding)
-                        self.regs.r[rd] = self.regs.r[rn] ^ shifted;
-                        // TODO: handle flags when S is set
-                    }
-                    8 => {
-                        // ADD (register, T3 encoding)
-                        self.regs.r[rd] = self.regs.r[rn].wrapping_add(shifted);
-                        // TODO: handle flags when S is set
-                    }
-                    _ => todo!("unimplemented data processing op {op}"),
-                }
+                let set = inst & 0x10 != 0;
+                // TODO: the shifter's carry out, for logical ops with S
+                let rrn = if rn == 15 { 0 } else { self.regs.r[rn] };
+                self.data_processing(op, rd, rrn, shifted, set);
             } else if inst & 0xe50 == 0x840 {
                 // STRD (immediate)
                 let rt = ((inst_2 >> 12) & 0xf) as usize;
@@ -287,9 +448,6 @@ impl Cpu {
         self.regs.r[15] += 2;
         if (inst_2 & 0x8000) != 0 {
             todo!("branches");
-        } else if inst & 0xbef == 0x04f {
-            // MOV (immediate, T2 encoding)
-            todo!();
         } else if inst & 0xbf0 == 0x240 {
             // MOV (immediate, T3 encoding)
             let rd = ((inst_2 >> 8) & 0xf) as usize;
@@ -373,18 +531,13 @@ impl Cpu {
             // data processing, modified 12-bit immediate (see 3.3.1)
             let op = (inst >> 5) & 0xf;
             let rn = (inst & 0xf) as usize;
-            let rrn = self.regs.r[rn];
+            // MOV and MVN (immediate) are ORR and ORN with rn = pc
+            let rrn = if rn == 15 { 0 } else { self.regs.r[rn] };
             let rd = ((inst_2 >> 8) & 0xf) as usize;
             let imm = ((inst & 0x400) << 1) | ((inst_2 & 0x7000) >> 4) | (inst_2 & 0xff);
             let imm32 = thumb_expand_imm(imm);
-            if rd == 15 {
-                todo!()
-            } else {
-                match op {
-                    0 => self.regs.r[rd] = rrn & imm32,
-                    _ => todo!(),
-                }
-            }
+            let set = inst & 0x10 != 0;
+            self.data_processing(op, rd, rrn, imm32, set);
         } else if inst & 0xf10 == 0x300 {
             // bit field operations, saturation with shift (see 3.3.1)
             let op = (inst >> 5) & 7;
@@ -440,6 +593,59 @@ impl Cpu {
             }
         } else {
             todo!("inst {inst:04x} not implemented");
+        }
+    }
+}
+
+impl Cpu {
+    /// 32 bit data processing, with an immediate or shifted register
+    /// operand (tables 3-21 and 3-25). Rd = 15 with S set is the test form
+    /// (TST, TEQ, CMN, CMP). The carry out of a shift or rotated immediate
+    /// isn't modeled for logical ops.
+    fn data_processing(&mut self, op: u16, rd: usize, rn: u32, operand: u32, set: bool) {
+        let carry_in = (self.regs.psr >> 29) & 1;
+        let test = rd == 15 && set;
+        let val = match op {
+            0 => rn & operand,  // AND, TST
+            1 => rn & !operand, // BIC
+            2 => rn | operand,  // ORR, MOV when rn is pc
+            3 => rn | !operand, // ORN, MVN when rn is pc
+            4 => rn ^ operand,  // EOR, TEQ
+            8 => {
+                // ADD, CMN
+                let v = self.add_flags(rn, operand, 0, set);
+                if !test {
+                    self.regs.r[rd] = v;
+                }
+                return;
+            }
+            10 => {
+                self.regs.r[rd] = self.add_flags(rn, operand, carry_in, set); // ADC
+                return;
+            }
+            11 => {
+                self.regs.r[rd] = self.add_flags(rn, !operand, carry_in, set); // SBC
+                return;
+            }
+            13 => {
+                // SUB, CMP
+                let v = self.add_flags(rn, !operand, 1, set);
+                if !test {
+                    self.regs.r[rd] = v;
+                }
+                return;
+            }
+            14 => {
+                self.regs.r[rd] = self.add_flags(operand, !rn, 1, set); // RSB
+                return;
+            }
+            _ => todo!("data processing op {op}"),
+        };
+        if set {
+            self.set_nz(val);
+        }
+        if !test {
+            self.regs.r[rd] = val;
         }
     }
 }

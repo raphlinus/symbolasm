@@ -17,6 +17,19 @@ impl Cpu {
         result
     }
 
+    /// Add with carry, setting flags only if `set`.
+    pub fn add_flags(&mut self, a: u32, b: u32, c: u32, set: bool) -> u32 {
+        if set {
+            self.adc(a, b, c)
+        } else {
+            a.wrapping_add(b).wrapping_add(c)
+        }
+    }
+
+    pub fn set_c(&mut self, c: u32) {
+        self.regs.psr = (self.regs.psr & !0x2000_0000) | ((c & 1) << 29);
+    }
+
     pub fn set_nz(&mut self, val: u32) {
         let z = ((val == 0) as u32) << 30;
         let nz = (val & 0x8000_0000) | z;

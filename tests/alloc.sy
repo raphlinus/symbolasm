@@ -1,0 +1,125 @@
+// The linked list allocator from symbolasm's alloc2.sy, transliterated
+// into syntax that compiles today: placements are relabeled with a
+// self-move (elided), and results are returned in r0 by convention.
+// free has the merge cases filled in.
+//
+// The list is sorted by address and starts at a dummy head with size 0,
+// outside the heap. Holes are at least 8 bytes, 8 aligned.
+
+struct Hole {
+    next: *Hole
+    size: u32
+}
+
+// Allocate size bytes aligned to align (a power of two). Returns the block
+// in r0, or 0 if there's no room.
+fn alloc(head: *Hole, size: u32, align: u32) {
+    cur @r3 = head.next
+    size += 7
+    #(size &= !7)
+    if #eq {
+        size = 8
+    }
+    align -= 1
+    if cur == 0 goto fail
+    prev @r0 = head
+    loop {
+        cur_size @r4 = cur.size
+        next @r5 = cur.next
+        #(size - cur_size)
+        if #ls goto candidate
+        // relabel: the old cur is now prev
+        prev @r3 = cur
+        #(cur @r0 = next)
+        if #eq goto fail
+        cur_size = cur.size
+        next = cur.next
+        #(size - cur_size)
+        if #ls goto candidate2
+try_again:
+        prev @r0 = cur
+        #(cur @r3 = next)
+        if #ne goto loop
+    }
+fail:
+    ret @r0 = 0
+    bx lr
+candidate:
+    tmp @r6 = prev
+    cur @r0 = cur
+    prev @r3 = tmp
+candidate2:
+    cur_end @r7 = cur + cur_size
+    #(cur & align)
+    if {
+        if #eq goto end
+        cur_aligned @r6 = cur + align
+        cur_aligned &= !align
+        // Fixed: alloc2.sy checked size against cur_end - cur_aligned, which
+        // wraps when aligning moves past the end of the hole.
+        aligned_end @r4 = cur_aligned + size
+        #(cur_end - aligned_end)
+        if #lo goto try_again
+        left_split_size @r2 = cur_aligned - cur
+        cur.size = left_split_size
+        prev.next = cur
+        prev = cur
+        cur = cur_aligned
+    }
+    alloc_end @r1 = cur + size
+    #(right_split_size @r2 = cur_end - alloc_end)
+    if {
+        if #eq goto end
+        alloc_end.next = next
+        alloc_end.size = right_split_size
+        next = alloc_end
+    }
+    prev.next = next
+    bx lr
+}
+
+// Free a block allocated with this size.
+fn free(head: *Hole, ptr: *Hole, size: u32) {
+    size += 7
+    #(size &= !7)
+    if #eq {
+        size = 8
+    }
+    // Stop when cur is past ptr or null: cur - 1 >= ptr, unsigned,
+    // covers both.
+    cur @r3 = head.next
+    prev @r0 = head
+    loop {
+        t @r4 = cur - 1
+        #(t - ptr)
+        if #hs goto end
+        prev = cur
+        cur = prev.next
+        goto loop
+    }
+    // prev < ptr < cur (cur may be 0); first try to absorb cur
+    ptr_end @r4 = ptr + size
+    #(ptr_end - cur)
+    if {
+        if #ne goto end
+        cur_size @r5 = cur.size
+        size += cur_size
+        cur = cur.next
+    }
+    // then try to extend prev over the freed block
+    prev_size @r5 = prev.size
+    prev_end @r4 = prev + prev_size
+    #(prev_end - ptr)
+    if {
+        if #ne goto else
+        prev_size += size
+        prev.size = prev_size
+        prev.next = cur
+        bx lr
+    } else {
+        ptr.size = size
+        ptr.next = cur
+        prev.next = ptr
+        bx lr
+    }
+}
