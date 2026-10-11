@@ -1,0 +1,5 @@
+// error: a tuple can't be transferred with a post-decrement
+fn f(p: *u32) {
+    (a @r1, b @r2) = *p--
+    bx lr
+}

@@ -1,0 +1,5 @@
+// error: ++ and -- only apply to an address
+fn f(p: *u32) {
+    q @r1 = p++
+    bx lr
+}

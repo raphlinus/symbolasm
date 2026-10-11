@@ -164,12 +164,47 @@ impl<'a> IrCtx<'a> {
         Ok(ir)
     }
 
+    /// `*p++ = x` or `x = *p++`: update the address by the size of the
+    /// transfer, which for a tuple is the whole tuple.
+    fn post_inc(&mut self, ir: Ir, sign: i32, is_store: bool) -> Result<Ir, Error> {
+        let Ir::Assign(assign) = &ir else {
+            unreachable!()
+        };
+        let (deref, other) = if is_store {
+            (&assign.lhs, &assign.rhs)
+        } else {
+            (&assign.rhs, &assign.lhs)
+        };
+        let size = if let Body::Tuple(_) = other.body {
+            self.types.info(other.ty).size()
+        } else {
+            self.types.info(deref.ty).size()
+        };
+        if let Body::Tuple(_) = other.body
+            && sign < 0
+        {
+            return Err("a tuple can't be transferred with a post-decrement")?;
+        }
+        Ok(Ir::WithAddrUpdate(ir.into(), sign * size as i32))
+    }
+
     fn is_ptr(&self, ty: TypeHandle) -> bool {
         matches!(self.types.get(ty), Type::Ptr(_))
     }
 
     fn lower_raw(&mut self, stmt: &Stmt) -> Result<Ir, Error> {
         match stmt {
+            Stmt::Assign(lhs, op, rhs) if op.tok == TokBody::Equals => {
+                if let Some((deref, sign)) = strip_post_inc(lhs) {
+                    let ir = self.lower_assign(&deref, &op.tok, rhs, false)?;
+                    return self.post_inc(ir, sign, true);
+                }
+                if let Some((deref, sign)) = strip_post_inc(rhs) {
+                    let ir = self.lower_assign(lhs, &op.tok, &deref, false)?;
+                    return self.post_inc(ir, sign, false);
+                }
+                self.lower_assign(lhs, &op.tok, rhs, false)
+            }
             Stmt::Assign(lhs, op, rhs) => self.lower_assign(lhs, &op.tok, rhs, false),
             Stmt::WithFlagsExpr(expr) => {
                 let expr = self.lower_expr(expr)?;
@@ -357,6 +392,9 @@ impl<'a> IrCtx<'a> {
                 Ok(Expr { ty, body })
             }
             parse::Expr::Call(name, args) => self.lower_call(name, args),
+            parse::Expr::PostInc(..) => {
+                Err("++ and -- only apply to an address being loaded or stored, as in *p++")?
+            }
             parse::Expr::Tuple(exps) => {
                 let mut irs = vec![];
                 let mut types = vec![];
@@ -523,6 +561,18 @@ impl<'a> IrCtx<'a> {
         } else {
             Some(TypeHandle::default())
         }
+    }
+}
+
+/// Split `*p++` into `*p` and the direction of the update.
+fn strip_post_inc(expr: &parse::Expr) -> Option<(parse::Expr, i32)> {
+    if let parse::Expr::Unary(op, inner) = expr
+        && op.tok == TokBody::Asterisk
+        && let parse::Expr::PostInc(addr, sign) = &**inner
+    {
+        Some((parse::Expr::Unary(op.clone(), addr.clone()), *sign))
+    } else {
+        None
     }
 }
 

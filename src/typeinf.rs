@@ -162,6 +162,7 @@ impl<'a> TypeInferCtx<'a> {
             }
             parse::Expr::Slice(expr, _, _) => self.try_get_type(expr),
             parse::Expr::Tuple(_) => None,
+            parse::Expr::PostInc(expr, _) => self.try_get_type(expr),
             // lower16 and upper16 produce plain values
             parse::Expr::Call(_, _) => Some(TypeHandle::default()),
         }

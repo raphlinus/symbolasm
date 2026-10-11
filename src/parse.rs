@@ -99,6 +99,9 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     /// Function call syntax, currently only used for intrinsics.
     Call(Token, Vec<Expr>),
+    /// `p++` (1) or `p--` (-1), only valid as `*p++`: the address is
+    /// updated by the size of the transfer.
+    PostInc(Box<Expr>, i32),
 }
 
 #[derive(Debug)]
@@ -667,6 +670,15 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
     };
     while let Some(first) = toks.peek() {
         match &first.tok {
+            TokBody::PlusPlus | TokBody::MinusMinus => {
+                let sign = if first.tok == TokBody::PlusPlus {
+                    1
+                } else {
+                    -1
+                };
+                toks.next().unwrap();
+                expr = Expr::PostInc(expr.into(), sign);
+            }
             TokBody::Period => {
                 toks.next().unwrap();
                 let field = toks.next().ok_or("expected field name")?;
