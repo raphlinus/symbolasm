@@ -1,0 +1,5 @@
+// error: address offset -256 is out of range
+fn f(p: *u32) {
+    x @r1 = *(p - 256)
+    bx lr
+}

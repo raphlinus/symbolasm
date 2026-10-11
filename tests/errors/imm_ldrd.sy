@@ -1,0 +1,5 @@
+// error: ldrd offset 6 must be a multiple of 4
+fn f(p: *u32) {
+    (x @r2, y @r3) = *(p + 6)
+    bx lr
+}

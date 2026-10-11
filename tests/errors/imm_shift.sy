@@ -1,0 +1,5 @@
+// error: shift by 32 is out of range
+fn f(a: u32) {
+    a <<= 32
+    bx lr
+}

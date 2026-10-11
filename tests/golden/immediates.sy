@@ -1,0 +1,18 @@
+// Immediates that don't fit an instruction use its pair with the negated
+// or inverted value.
+fn fit(a: u32, b: u32) {
+    a += 4095
+    a += 0xfffff000
+    a -= 0xfffffff0
+    b = a & 0xffffff00
+    b = a & !0xff
+    b = a | 0xfffffffe
+    #(a - 0xffffffff)
+    #(a + 0xfffffff0)
+    #(b -= 4096)
+    #(b += 0xff000000)
+    c @r2 = 0xff00ff00
+    c = *(a - 4)
+    c = *(a + 4095)
+    bx lr
+}

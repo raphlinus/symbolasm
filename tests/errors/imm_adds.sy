@@ -1,0 +1,5 @@
+// error: 0x1001 isn't an encodable immediate for add
+fn f(a: u32) {
+    #(a += 4097)
+    bx lr
+}

@@ -143,7 +143,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // TODO: more sophistication about immediate size
                 // can be mvn if !n is imm12
                 // falls back to ldr
-                if *n < 0x1_0000 || is_imm8m(*n) {
+                // movs has no 16 bit immediate form
+                let imm16_ok = *n < 0x1_0000 && with_flags != WithFlags::Yes;
+                if imm16_ok || is_imm8m(*n) {
                     self.start_insn_flags("mov", with_flags, if_state)?;
                     write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
@@ -154,7 +156,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     write_reg(lhs, self.w)?;
                     writeln!(self.w, ", #{}", !n)?;
                 } else {
-                    // TODO: fail if with_flags
+                    if with_flags == WithFlags::Yes {
+                        Err(format!("movs can't encode {n:#x}"))?;
+                    }
                     self.start_insn("ldr", if_state)?;
                     write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
@@ -234,6 +238,16 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         _ => Err("unary not in rhs only works with and/or")?,
                     };
                     rhs = b.deref();
+                }
+                let fitted;
+                if let Body::Imm(n) = rhs.body {
+                    let (fit_insn, fit_n) = fit_imm(insn, n, with_flags == WithFlags::Yes)?;
+                    insn = fit_insn;
+                    fitted = Expr {
+                        ty: rhs.ty,
+                        body: Body::Imm(fit_n),
+                    };
+                    rhs = &fitted;
                 }
                 self.start_insn_flags(insn, with_flags, if_state)?;
                 write!(self.w, " ")?;
@@ -479,6 +493,20 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 "{op}rd has no register offset form in Thumb; only immediate offsets"
             ))?;
         }
+        if let Body::Binop(_, add_or_sub, offset) = &addr.body
+            && let Body::Imm(n) = offset.body
+        {
+            let n = if *add_or_sub == BinOp::Sub {
+                n.wrapping_neg()
+            } else {
+                n
+            } as i32;
+            if n % 4 != 0 || !(-1020..=1020).contains(&n) {
+                Err(format!(
+                    "{op}rd offset {n} must be a multiple of 4 from -1020 to 1020"
+                ))?;
+            }
+        }
         self.start_insn(&format!("{op}rd"), if_state)?;
         write!(self.w, " ")?;
         for el in els {
@@ -520,7 +548,13 @@ impl<'a, W: Write> GenCtx<'a, W> {
     fn gen_withflags(&mut self, expr: &Expr, if_state: &IfState) -> Result<(), Error> {
         match &expr.body {
             Body::Binop(a, op, b) => {
-                let insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
+                let mut insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
+                let mut b = b.deref().clone();
+                if let Body::Imm(n) = b.body {
+                    let (fit_insn, fit_n) = fit_imm(insn, n, true)?;
+                    insn = fit_insn;
+                    b.body = Body::Imm(fit_n);
+                }
                 self.start_insn(insn, if_state)?;
                 write!(self.w, " ")?;
                 if let Body::Reg(r) = &a.body {
@@ -530,7 +564,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     Err("left operand of binop must be reg")?;
                 }
                 write!(self.w, ", ")?;
-                self.gen_operand2(b)?;
+                self.gen_operand2(&b)?;
                 writeln!(self.w)?;
             }
             _ => Err("test expr must be binop")?,
@@ -589,6 +623,11 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 let Body::Reg(basereg) = &lhs.body else {
                     return Err("lhs of operand2 must be register")?;
                 };
+                if let Body::Imm(n) = rhs.body {
+                    check_shift(*op, n)?;
+                } else {
+                    Err("a shifted operand needs a constant shift")?;
+                }
                 write_reg(*basereg, self.w)?;
                 write!(self.w, ", {opsh} ")?;
                 self.gen_shift_amt(rhs)?;
@@ -624,6 +663,22 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     write!(self.w, ", #{incr}")?;
                 }
             }
+            Body::Binop(lhs, BinOp::Sub, rhs)
+                if let Body::Reg(r) = lhs.body
+                    && let Body::Imm(n) = rhs.body =>
+            {
+                if incr != 0 {
+                    Err("an address with an offset can't also be updated")?;
+                }
+                if !(1..=255).contains(&n) {
+                    Err(format!(
+                        "address offset -{n} is out of range (-255 to 4095)"
+                    ))?;
+                }
+                write!(self.w, "[")?;
+                write_reg(r, self.w)?;
+                write!(self.w, ", #-{n}]")?;
+            }
             Body::Binop(lhs, BinOp::Add, rhs) => {
                 // TODO: incr must be 0
                 let Body::Reg(lhs_reg) = &lhs.body else {
@@ -638,10 +693,15 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         write!(self.w, "]")?;
                     }
                     Body::Imm(n) => {
-                        // TODO: validation of immediate
+                        let offset = *n as i32;
+                        if !(-255..=4095).contains(&offset) {
+                            Err(format!(
+                                "address offset {offset} is out of range (-255 to 4095)"
+                            ))?;
+                        }
                         write!(self.w, "[")?;
                         write_reg(*lhs_reg, self.w)?;
-                        write!(self.w, ", #{n}]")?;
+                        write!(self.w, ", #{offset}]")?;
                     }
                     Body::Binop(offset, BinOp::Shl, shift) => {
                         if let Body::Reg(offset_reg) = &offset.body
@@ -876,6 +936,62 @@ fn is_imm8m(val: u32) -> bool {
         || val == (val & 0xff) * 0x0101_0101
         || val == (val & 0xff00) * 0x1_0001
         || (val << val.leading_zeros()) & 0xff_ffff == 0
+}
+
+/// Pick an encodable form for a data processing instruction with an
+/// immediate operand, or report that there isn't one.
+///
+/// Thumb-2 encodes modified immediates (imm8m), and add and sub also take
+/// any 12 bit immediate, though only without setting flags. When a value
+/// doesn't fit, the paired instruction may fit with the negated or
+/// inverted value: add/sub, cmp/cmn, and/bic, orr/orn. The pairs set the
+/// same flags, except for 0 and 0x80000000, whose negations aren't
+/// different values; those are never swapped.
+fn fit_imm(insn: &'static str, n: u32, with_flags: bool) -> Result<(&'static str, u32), Error> {
+    match insn {
+        "lsl" => return check_shift(BinOp::Shl, n).map(|_| (insn, n)),
+        "lsr" | "asr" => return check_shift(BinOp::Shr, n).map(|_| (insn, n)),
+        "mul" | "udiv" | "sdiv" => Err(format!("{insn} has no immediate form"))?,
+        _ => (),
+    }
+    let fits = |insn: &str, n: u32| {
+        is_imm8m(n) || (matches!(insn, "add" | "sub") && !with_flags && n < 0x1000)
+    };
+    if fits(insn, n) {
+        return Ok((insn, n));
+    }
+    let swapped = match insn {
+        "add" => Some(("sub", n.wrapping_neg())),
+        "sub" => Some(("add", n.wrapping_neg())),
+        "cmp" => Some(("cmn", n.wrapping_neg())),
+        "cmn" => Some(("cmp", n.wrapping_neg())),
+        "and" => Some(("bic", !n)),
+        "bic" => Some(("and", !n)),
+        "orr" => Some(("orn", !n)),
+        "orn" => Some(("orr", !n)),
+        _ => None,
+    };
+    if let Some((other, m)) = swapped
+        && n != 0x8000_0000
+        && fits(other, m)
+    {
+        return Ok((other, m));
+    }
+    Err(format!(
+        "{n:#x} isn't an encodable immediate for {insn}; load it into a register"
+    ))?
+}
+
+/// Shift amounts: lsl takes 0 to 31, lsr and asr 1 to 32.
+fn check_shift(op: BinOp, n: u32) -> Result<(), Error> {
+    let ok = match op {
+        BinOp::Shl => n < 32,
+        _ => (1..=32).contains(&n),
+    };
+    if !ok {
+        Err(format!("shift by {n} is out of range"))?;
+    }
+    Ok(())
 }
 
 fn insn_for_binop(binop: BinOp, ty: &Type) -> &'static str {

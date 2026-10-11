@@ -1,0 +1,5 @@
+// error: movs can't encode 0x1234
+fn f() {
+    #(x @r0 = 0x1234)
+    bx lr
+}

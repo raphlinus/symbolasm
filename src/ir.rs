@@ -541,6 +541,17 @@ fn canonicalize(expr: &mut Expr) -> Result<(), Error> {
         }
         Body::Reg(_) | Body::Imm(_) | Body::Sym(_) | Body::SymHalf(_, _) => return Ok(()),
     }
+    if let Body::Unary(op @ (UnaryOp::Not | UnaryOp::Neg), a) = &expr.body
+        && let Body::Imm(n) = a.body
+    {
+        let n = if *op == UnaryOp::Not {
+            !n
+        } else {
+            n.wrapping_neg()
+        };
+        expr.body = Body::Imm(n);
+        return Ok(());
+    }
     let Body::Binop(a, op, b) = &mut expr.body else {
         return Ok(());
     };

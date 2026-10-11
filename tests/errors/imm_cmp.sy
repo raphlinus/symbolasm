@@ -1,0 +1,5 @@
+// error: 0x20d isn't an encodable immediate for cmp
+fn f(a: u32) {
+    #(a - 525)
+    bx lr
+}

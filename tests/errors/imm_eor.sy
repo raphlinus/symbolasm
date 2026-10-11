@@ -1,0 +1,5 @@
+// error: 0x12345 isn't an encodable immediate for eor
+fn f(a: u32) {
+    a ^= 0x12345
+    bx lr
+}
