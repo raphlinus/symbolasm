@@ -1,0 +1,51 @@
+// fill_16 from pico-dvi-rs new_renderer_junk (draw.asm, "branch fold").
+// Its machine code matches the hand-written original exactly.
+
+// Fill count 16 bit pixels at dst with color. 0.75 cycles per pixel in
+// the main loop.
+fn fill_16(dst: *u16, color: u32, count: u32) {
+    // bit 1 of dst to carry: if it's set, store one pixel to align
+    #(_ @r3 = dst >> 2)
+    if #cs {
+        count -= 1
+        *dst++ = color
+    }
+    // word aligned from here; the move is elided
+    dst32 @r0 = dst as *u32
+    // whole words to store; the odd pixel is in carry, until finish
+    #(words @r3 = count >> 1)
+    if #eq goto finish
+    color = pkhbt(color, color << 16)
+    #(words -= 2)
+    *dst32++ = color
+    if #lo goto finish
+    *dst32++ = color
+    if #eq goto finish
+    #(words >>= 1)
+    *dst32++ = color
+    if #eq goto finish
+    if #cs {
+        *dst32++ = color
+    }
+    #(words -= 2)
+    *dst32++ = color
+    if #lo goto finish
+    *dst32++ = color
+    *dst32++ = color
+    if #eq goto finish
+    loop {
+        #(words -= 2)
+        *dst32++ = color
+        *dst32++ = color
+        if #lo goto finish
+        *dst32++ = color
+        *dst32++ = color
+        if #ne goto loop
+    }
+finish:
+    #(count >>= 1)
+    if #cs {
+        *(dst32 as *u16) = color
+    }
+    bx lr
+}
