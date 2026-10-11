@@ -1,0 +1,11 @@
+// The low byte or halfword uses uxtb/uxth (sxtb/sxth when signed), which
+// have 16 bit encodings for low registers; other fields use ubfx/sbfx.
+fn extend(a: u32, s: i32) {
+    b @r2 = a[0..8]
+    b = a[0..16]
+    b = s[0..8]
+    b = s[0..16]
+    b = a[8..16]
+    b = s[8..16]
+    bx lr
+}

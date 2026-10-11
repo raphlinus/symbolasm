@@ -283,21 +283,32 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 }
             }
             Body::Slice(a, start, end) => {
-                // TODO: handle 0..8 and 0..16 (shorter encodings)
-                let insn = if self.types.get(a.ty).is_signed() {
-                    "sbfx"
-                } else {
-                    "ubfx"
-                };
+                if with_flags == WithFlags::Yes {
+                    Err("bit field extracts can't set flags")?;
+                }
+                let signed = self.types.get(a.ty).is_signed();
                 // TODO: ensure end > start, otherwise error
                 let width = end - start;
+                // The low byte or halfword has its own instruction, which
+                // has a 16 bit encoding for low registers.
+                let extend = match (*start, width, signed) {
+                    (0, 8, false) => Some("uxtb"),
+                    (0, 8, true) => Some("sxtb"),
+                    (0, 16, false) => Some("uxth"),
+                    (0, 16, true) => Some("sxth"),
+                    _ => None,
+                };
                 if let Body::Reg(r) = &a.body {
-                    self.start_insn_flags(insn, with_flags, if_state)?;
+                    let insn = extend.unwrap_or(if signed { "sbfx" } else { "ubfx" });
+                    self.start_insn(insn, if_state)?;
                     write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
                     write!(self.w, ", ")?;
                     write_reg(*r, self.w)?;
-                    writeln!(self.w, ", #{start}, #{width}")?;
+                    if extend.is_none() {
+                        write!(self.w, ", #{start}, #{width}")?;
+                    }
+                    writeln!(self.w)?;
                 } else {
                     Err("slice source must be register")?;
                 }
