@@ -232,8 +232,10 @@ impl Cpu {
                 }
             }
         } else {
-            // load from literal pool
-            todo!()
+            // LDR (literal, T1 encoding)
+            let rt = ((inst >> 8) & 7) as usize;
+            let addr = ((self.regs.r[15] + 2) & !3) + ((inst as u32 & 0xff) << 2);
+            self.regs.r[rt] = self.load_u32(addr);
         }
     }
 
@@ -446,7 +448,7 @@ impl Cpu {
     fn inst_f(&mut self, inst: u16) {
         let inst_2 = self.load_u16(self.regs.r[15]);
         self.regs.r[15] += 2;
-        if (inst_2 & 0x8000) != 0 {
+        if inst & 0x800 == 0 && (inst_2 & 0x8000) != 0 {
             todo!("branches");
         } else if inst & 0xbf0 == 0x240 {
             // MOV (immediate, T3 encoding)
@@ -589,7 +591,13 @@ impl Cpu {
                 todo!();
             } else {
                 // other three register data processing, table 3-31
-                todo!();
+                let op = (inst >> 4) & 7;
+                let op2 = (inst_2 >> 4) & 7;
+                match (op, op2) {
+                    (1, 2) => self.regs.r[rd] = self.regs.r[rm].reverse_bits(),
+                    (3, 0) => self.regs.r[rd] = self.regs.r[rm].leading_zeros(),
+                    _ => todo!("inst {inst:04x} {inst_2:04x}"),
+                }
             }
         } else {
             todo!("inst {inst:04x} not implemented");
