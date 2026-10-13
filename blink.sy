@@ -4,45 +4,55 @@
 // A minimal program that can blink the LED on a Fruit Jam board.
 // It requires .vectors and .image_def sections.
 
+const LED_PIN = 29
+// IO_BANK0 and PADS_BANK0 in the RESETS registers
+const RESET_IO_PADS = (1 << 6) | (1 << 9)
+// Input and Schmitt trigger enabled, pull down, 4mA drive, isolation off
+const PAD_CONFIG = 0x56
+const FUNCSEL_SIO = 5
+const DELAY = 300_000
+// Offsets of the atomic set and clear aliases of a peripheral
+const ATOMIC_SET = 0x2000
+const ATOMIC_CLEAR = 0x3000
+
 fn start() {
-    mask @r0 = 0x240
+    mask @r0 = RESET_IO_PADS
     bl clear_reset
-    pads_bank0 @r0 = peripherals.PADS_BANK0
-    pads_bank0 += 4
-    led_pin @r1 = 29
-    config @r2 = 0x56
-    *(pads_bank0 + (led_pin << 2)) = config
-    io_bank0 @r0 = peripherals.IO_BANK0
-    io_bank0 += 4
-    function @r2 = 5
-    *(io_bank0 + (led_pin << 3)) = function
+    pads @r0 = &peripherals.PADS_BANK0.GPIO0
+    config @r2 = PAD_CONFIG
+    *(pads + LED_PIN * 4) = config
+    io_bank0 @r0 = &peripherals.IO_BANK0.GPIO0_CTRL
+    function @r2 = FUNCSEL_SIO
+    *(io_bank0 + LED_PIN * 8) = function
     sio @r0 = peripherals.SIO
-    mask @r2 = 1
-    mask <<= led_pin
+    mask @r2 = 1 << LED_PIN
     sio.GPIO_OE_SET = mask
-blink_loop:
-    sio.GPIO_OUT_XOR = mask
-    count @r1 = 300_000
-delay:
-    #(count -= 1)
-    bne delay
-    b blink_loop
+    loop {
+        sio.GPIO_OUT_XOR = mask
+        count @r1 = DELAY
+        loop {
+            #(count -= 1)
+            if #ne goto loop
+        }
+        goto loop
+    }
 }
 
 fn assert_reset(mask: u32) {
     resets @r1 = peripherals.RESETS
-    atomic_set @r2 = 0x2000
+    atomic_set @r2 = ATOMIC_SET
     *(resets + atomic_set) = mask
     bx lr
 }
 
 fn clear_reset(mask: u32) {
     resets @r1 = peripherals.RESETS
-    atomic_clear @r2 = 0x3000
+    atomic_clear @r2 = ATOMIC_CLEAR
     *(resets + atomic_clear) = mask
-loop:
-    status @r2 = resets.RESET_DONE
-    #(_ @r2 = mask & !status)
-    bne loop
+    loop {
+        status @r2 = resets.RESET_DONE
+        #(_ @r2 = mask & !status)
+        if #ne goto loop
+    }
     bx lr
 }
