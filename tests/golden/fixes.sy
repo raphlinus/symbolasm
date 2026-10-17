@@ -26,7 +26,7 @@ fn branch_named_vars(a) {
     b @r1 = a
     b += 1
     bl @r2 = b
-    cbz bl, out
+    if bl == 0 goto out
     a = bl
 out:
     bx lr

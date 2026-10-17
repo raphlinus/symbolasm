@@ -12,7 +12,7 @@ data_loop:
     #(count -= 1)
     val @r3 = *src; src += 4
     *dst = val; dst += 4
-    bne data_loop
+    if #ne goto data_loop
     // placements made before the loop survive it
     dst = _data_source
     bx lr

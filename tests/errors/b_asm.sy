@@ -1,0 +1,5 @@
+// error: use `goto label` instead of b
+fn f(x) {
+l:
+    b l
+}

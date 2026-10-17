@@ -2,5 +2,5 @@
 fn f(a) {
 top:
     a -= 1
-    cbnz a, top
+    if a != 0 goto top
 }

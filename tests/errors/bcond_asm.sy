@@ -1,0 +1,5 @@
+// error: use `if #ne goto label` instead of bne
+fn f(x) {
+loop:
+    bne loop
+}

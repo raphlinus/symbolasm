@@ -531,22 +531,10 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 }
                 "bcc" | "bcs" | "beq" | "bge" | "bgt" | "bhi" | "bhs" | "ble" | "blo" | "bls"
                 | "blt" | "bmi" | "bne" | "bpl" | "bvc" | "bvs" => {
-                    let dst = toks.next().ok_or("expected label")?;
-                    let TokBody::Identifier(label) = dst.tok.clone() else {
-                        return Err("branch target must be identifier")?;
-                    };
-                    let cond = ident[1..].to_string();
-                    toks.expect(&TokBody::Newline)?;
-                    return Ok(Stmt::Insn(Insn::BCond(cond, label)));
+                    let cond = &ident[1..];
+                    return Err(format!("use `if #{cond} goto label` instead of {ident}"))?;
                 }
-                "b" => {
-                    let dst = toks.next().ok_or("expected label")?;
-                    let TokBody::Identifier(label) = dst.tok.clone() else {
-                        return Err("branch target must be identifier")?;
-                    };
-                    toks.expect(&TokBody::Newline)?;
-                    return Ok(Stmt::Insn(Insn::B(label)));
-                }
+                "b" => return Err("use `goto label` instead of b")?,
                 "bl" => {
                     let dst = toks.next().ok_or("expected label")?;
                     let TokBody::Identifier(label) = dst.tok.clone() else {
@@ -555,20 +543,8 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                     toks.expect(&TokBody::Newline)?;
                     return Ok(Stmt::Insn(Insn::Bl(label)));
                 }
-                "cbz" | "cbnz" => {
-                    let reg = parse_expr(toks)?;
-                    toks.expect(&TokBody::Comma)?;
-                    let dst = toks.next().ok_or("expected label")?;
-                    let TokBody::Identifier(label) = dst.tok.clone() else {
-                        return Err("branch target must be identifier")?;
-                    };
-                    toks.expect(&TokBody::Newline)?;
-                    return Ok(match ident.as_str() {
-                        "cbz" => Stmt::Insn(Insn::Cbz(reg, label)),
-                        "cbnz" => Stmt::Insn(Insn::Cbnz(reg, label)),
-                        _ => unreachable!(),
-                    });
-                }
+                "cbz" => return Err("use `if x == 0 goto label` instead of cbz")?,
+                "cbnz" => return Err("use `if x != 0 goto label` instead of cbnz")?,
                 "wfe" | "wfi" | "sev" | "nop" | "dmb" | "dsb" | "isb" => {
                     toks.expect(&TokBody::Newline)
                         .map_err(|_| format!("{ident} takes no operands"))?;

@@ -1,0 +1,6 @@
+// error: use `if x == 0 goto label` instead of cbz
+fn f(x) {
+    cbz x, l
+l:
+    bx lr
+}

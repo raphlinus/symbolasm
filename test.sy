@@ -19,7 +19,7 @@ loop:
         x = 1
     }
     y @r2 = x
-    bne loop
+    if #ne goto loop
     x = y ^ z
     x = y | z
     x = y & z
@@ -56,7 +56,7 @@ fn tuples(p: *u32) {
 
 fn list_len(list: *List) {
     len @r1 = 0
-    cbz list, done
+    if list == 0 goto done
 loop2:
     val @r2 = list.val
     val += 1
@@ -64,7 +64,7 @@ loop2:
     list = list.next
     len += 1
     #(list - 0)
-    bne loop2
+    if #ne goto loop2
 done:
     r0 = len
     bx lr
