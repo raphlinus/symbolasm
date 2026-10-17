@@ -7,3 +7,8 @@ license = "Apache-2.0 OR MIT"
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 roxml = "0.2.0"
+
+[workspace]
+members = ["m33"]
+# demo-rs is built for the target, on its own
+exclude = ["m33/demo-rs"]

@@ -7,8 +7,8 @@
 //! each other or live blocks, and holes plus live blocks cover the heap
 //! exactly. A failing sequence is shrunk before it's reported.
 //!
-//! Building needs symbolasm (at $SYMBOLASM, default ~/garden/symbolasm)
-//! and arm-none-eabi binutils.
+//! alloc.sy is compiled with the symbolasm in this workspace; building
+//! also needs arm-none-eabi binutils.
 
 use std::{collections::HashMap, path::PathBuf, process::Command};
 
@@ -23,14 +23,12 @@ const MEM_SIZE: usize = 0x40000;
 fn build() -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!("m33-alloc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let symbolasm = std::env::var("SYMBOLASM")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join("garden/symbolasm"));
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/alloc.sy");
-    let out = Command::new("cargo")
-        .args(["run", "-q", "--"])
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = manifest_dir.join("tests/alloc.sy");
+    let out = Command::new(env!("CARGO"))
+        .args(["run", "-q", "-p", "symbolasm", "--"])
         .arg(&src)
-        .current_dir(&symbolasm)
+        .current_dir(manifest_dir.parent().unwrap())
         .output()
         .expect("running symbolasm");
     assert!(

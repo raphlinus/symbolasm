@@ -9,22 +9,22 @@ const N: u16 = 0xFF00;
 
 // Table 3-38
 const COND_TAB: [u16; 16] = [
-    Z, // EQ
-    !Z, // NE
-    C, // CS, HS
-    !C, // CC, LO
-    N, // MI
-    !N, // PL
-    V, // VS
-    !V, // VC
-    C & !Z, // HI
-    !(C & !Z), // LS
-    !(N ^ V), // GE
-    N ^ V, // LT
+    Z,              // EQ
+    !Z,             // NE
+    C,              // CS, HS
+    !C,             // CC, LO
+    N,              // MI
+    !N,             // PL
+    V,              // VS
+    !V,             // VC
+    C & !Z,         // HI
+    !(C & !Z),      // LS
+    !(N ^ V),       // GE
+    N ^ V,          // LT
     !(Z | (N ^ V)), // GT
-    Z | (N ^ V), // LE
-    !0, // AL
-    !0, // alternative
+    Z | (N ^ V),    // LE
+    !0,             // AL
+    !0,             // alternative
 ];
 
 impl Cpu {
