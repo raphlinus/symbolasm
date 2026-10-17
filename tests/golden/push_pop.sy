@@ -31,3 +31,12 @@ fn irqs() {
     cpsie(i)
     bx lr
 }
+
+// A binding in a pop places the variable in the restored register.
+fn spill(p: *u32) {
+    push(p, lr)
+    bl elsewhere
+    pop(p @r1, lr)
+    *p = r0
+    bx lr
+}

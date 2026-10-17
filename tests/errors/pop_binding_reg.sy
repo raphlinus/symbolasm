@@ -1,0 +1,5 @@
+// error: foo is not a register
+fn f(x) {
+    pop(x @foo)
+    bx lr
+}

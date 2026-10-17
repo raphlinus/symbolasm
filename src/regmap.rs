@@ -86,6 +86,15 @@ impl Regmap {
                         self.kill(n);
                     }
                 }
+                // `x @r1` in a pop places x in the restored register
+                for r in regs {
+                    if let Expr::Binop(var, op, place) = r
+                        && op.tok == TokBody::At
+                        && let Expr::Ident(place) = &**place
+                    {
+                        self.place_expr(var, place);
+                    }
+                }
             }
             Stmt::Insn(Insn::Bl(_) | Insn::Blx(_)) => {
                 // By ABI convention

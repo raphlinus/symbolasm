@@ -1073,12 +1073,16 @@ impl<'a, W: Write> GenCtx<'a, W> {
     ) -> Result<(), Error> {
         let mut nums = vec![];
         for r in regs {
-            let id = r
-                .as_ident()
-                .ok_or(format!("{insn} arguments must be registers"))?;
-            let n = parse_register(id)
-                .or_else(|| regmap.lookup(id))
-                .ok_or(format!("no place for {id}"))?;
+            let n = if let Some(id) = r.as_ident() {
+                parse_register(id)
+                    .or_else(|| regmap.lookup(id))
+                    .ok_or(format!("no place for {id}"))?
+            } else if let Some(place) = pop_binding(insn, r) {
+                // `pop(x @r1)` restores into r1 and places x there
+                parse_register(place).ok_or(format!("{place} is not a register"))?
+            } else {
+                Err(format!("{insn} arguments must be registers"))?
+            };
             if nums.last().is_some_and(|&last| n <= last) {
                 Err(format!("{insn} registers must be in ascending order"))?;
             }
@@ -1302,5 +1306,17 @@ fn str_for_ty(ty: Option<&Type>) -> &'static str {
         Some(Type::U8 | Type::I8) => "strb",
         Some(Type::U16 | Type::I16) => "strh",
         _ => "str",
+    }
+}
+
+/// The register of a `x @rN` binding in a pop list.
+fn pop_binding<'a>(insn: &str, r: &'a crate::parse::Expr) -> Option<&'a str> {
+    match r {
+        crate::parse::Expr::Binop(var, op, place)
+            if insn == "pop" && op.tok == crate::lex::TokBody::At && var.as_ident().is_some() =>
+        {
+            place.as_ident()
+        }
+        _ => None,
     }
 }

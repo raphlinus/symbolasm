@@ -42,3 +42,14 @@ irqs:
     cpsie i
     bx lr
 .size irqs, . - irqs
+.section .text
+.global spill
+.type spill, %function
+.thumb_func
+spill:
+    push {r0, lr}
+    bl elsewhere
+    pop {r1, lr}
+    str r0, [r1]
+    bx lr
+.size spill, . - spill
