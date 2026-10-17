@@ -8,10 +8,10 @@
 wait:
 .Lwait_0_loop:
     ldr r1, [r0]
-    cbnz r1, .Lwait_0_end
+    cbnz r1, .Lwait_0_break
     wfe
     b .Lwait_0_loop
-.Lwait_0_end:
+.Lwait_0_break:
     dmb
     dsb
     isb

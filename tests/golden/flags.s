@@ -28,7 +28,7 @@ live:
     add r1, r1, #1
     mov r12, #7
     bne .Llive_0_loop
-.Llive_0_end:
+.Llive_0_break:
     cmp r0, #3
     add r1, r1, #2
     bhi .Llive.done

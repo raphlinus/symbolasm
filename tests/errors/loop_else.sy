@@ -1,0 +1,8 @@
+// error: loop block can't have an else
+fn f(x) {
+    loop {
+        goto break
+    } else {
+        x = 1
+    }
+}

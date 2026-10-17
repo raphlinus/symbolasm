@@ -37,7 +37,7 @@ fill_16:
     stm r0!, {r1}
     stm r0!, {r1}
     bne .Lfill_16_0_loop
-.Lfill_16_0_end:
+.Lfill_16_0_break:
 .Lfill_16.finish:
     lsrs r2, r2, #1
     it cs

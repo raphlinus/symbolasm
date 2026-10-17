@@ -1,0 +1,6 @@
+// error: goto end outside an if block; use goto break to leave a loop
+fn f(x) {
+    loop {
+        if x == 0 goto end
+    }
+}

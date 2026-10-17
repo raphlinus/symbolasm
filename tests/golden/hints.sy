@@ -1,7 +1,7 @@
 fn wait(p: *u32) {
     loop {
         x @r1 = *p
-        if x != 0 goto end
+        if x != 0 goto break
         wfe
         goto loop
     }

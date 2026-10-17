@@ -1,0 +1,6 @@
+// error: goto break outside a loop block
+fn f(x) {
+    if {
+        if x == 0 goto break
+    }
+}

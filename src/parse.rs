@@ -288,10 +288,11 @@ fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
 enum OpenBlock {
     /// `if #cc { }`, compiled to an IT block
     It,
-    /// `if { }` or `loop { }`, which only scope the labels `loop`, `else`
-    /// and `end`
+    /// `if { }`, which scopes the labels `else` and `end`, or `loop { }`,
+    /// which scopes `loop` and `break`
     Labels {
         id: usize,
+        is_loop: bool,
         has_else: bool,
         uses_else: bool,
     },
@@ -319,6 +320,7 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
             if let Some(OpenBlock::It) = blocks.last() {
                 return Err("blocks are not allowed inside if #cc { }".into()).at(&loc);
             }
+            let is_loop = tok.match_str("loop");
             toks.next();
             toks.next();
             toks.expect(&TokBody::Newline)?;
@@ -326,11 +328,14 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
             n_label_blocks += 1;
             blocks.push(OpenBlock::Labels {
                 id,
+                is_loop,
                 has_else: false,
                 uses_else: false,
             });
-            stmts.push(Stmt::Label(block_label(id, "loop")));
-            locs.push(loc);
+            if is_loop {
+                stmts.push(Stmt::Label(block_label(id, "loop")));
+                locs.push(loc);
+            }
             continue;
         }
         let mut stmt = parse_stmt(toks).at(&loc)?;
@@ -344,13 +349,26 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
                     blocks.pop();
                 }
             }
-            (Stmt::Else, Some(OpenBlock::Labels { id, has_else, .. })) => {
+            (
+                Stmt::Else,
+                Some(OpenBlock::Labels {
+                    id,
+                    is_loop,
+                    has_else,
+                    ..
+                }),
+            ) => {
+                if *is_loop {
+                    return Err("loop block can't have an else".into()).at(&loc);
+                }
                 if *has_else {
                     return Err("block already has an else".into()).at(&loc);
                 }
                 // One statement is one instruction, so no branch is
-                // inserted; the then part must end with one.
-                if !stmts.last().is_some_and(is_unconditional_branch) {
+                // inserted; the then part must end with one. A conditional
+                // branch is accepted, as it signals that falling through
+                // into the else part is intended.
+                if !stmts.last().is_some_and(is_branch) {
                     return Err("then part falls through into else; end it with goto end".into())
                         .at(&loc);
                 }
@@ -360,6 +378,7 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
             (Stmt::EndBlock, Some(OpenBlock::Labels { id, .. })) => {
                 let id = *id;
                 let Some(OpenBlock::Labels {
+                    is_loop,
                     has_else,
                     uses_else,
                     ..
@@ -370,18 +389,35 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
                 if uses_else && !has_else {
                     return Err("goto else in a block with no else".into()).at(&loc);
                 }
-                stmt = Stmt::Label(block_label(id, "end"));
+                stmt = Stmt::Label(block_label(id, if is_loop { "break" } else { "end" }));
             }
             (Stmt::Insn(_), _) => {
-                // `loop`, `else` and `end` refer to the innermost label block
-                let innermost = blocks.iter_mut().rev().find_map(|b| match b {
-                    OpenBlock::Labels { id, uses_else, .. } => Some((*id, uses_else)),
-                    OpenBlock::It => None,
-                });
-                if let Some((id, uses_else)) = innermost
-                    && let Some(label) = branch_target_mut(&mut stmt)
-                    && matches!(label.as_str(), "loop" | "else" | "end")
+                // `loop` and `break` refer to the innermost `loop { }`, `else`
+                // and `end` to the innermost `if { }`. Outside any label
+                // block they are ordinary named labels.
+                if let Some(label) = branch_target_mut(&mut stmt)
+                    && matches!(label.as_str(), "loop" | "break" | "else" | "end")
+                    && blocks.iter().any(|b| matches!(b, OpenBlock::Labels { .. }))
                 {
+                    let want_loop = matches!(label.as_str(), "loop" | "break");
+                    let target = blocks.iter_mut().rev().find_map(|b| match b {
+                        OpenBlock::Labels {
+                            id,
+                            is_loop,
+                            uses_else,
+                            ..
+                        } if *is_loop == want_loop => Some((*id, uses_else)),
+                        _ => None,
+                    });
+                    let Some((id, uses_else)) = target else {
+                        let msg = match label.as_str() {
+                            "end" => "goto end outside an if block; use goto break to leave a loop"
+                                .to_string(),
+                            "else" => "goto else outside an if block".to_string(),
+                            _ => format!("goto {label} outside a loop block"),
+                        };
+                        return Err(msg.into()).at(&loc);
+                    };
                     if label == "else" {
                         *uses_else = true;
                     }
@@ -396,9 +432,11 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
     Ok((stmts, locs))
 }
 
-fn is_unconditional_branch(stmt: &Stmt) -> bool {
+fn is_branch(stmt: &Stmt) -> bool {
     match stmt {
-        Stmt::Insn(Insn::B(_) | Insn::Bx(_)) => true,
+        Stmt::Insn(Insn::B(_) | Insn::BCond(..) | Insn::Cbz(..) | Insn::Cbnz(..) | Insn::Bx(_)) => {
+            true
+        }
         Stmt::Insn(Insn::Pop(regs)) => regs.iter().any(|r| r.as_ident() == Some("pc")),
         _ => false,
     }

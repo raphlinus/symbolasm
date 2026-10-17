@@ -92,7 +92,7 @@ fn free(head: *Hole, ptr: *Hole, size: u32) {
     loop {
         t @r4 = cur - 1
         #(t - ptr)
-        if #hs goto end
+        if #hs goto break
         prev = cur
         cur = prev.next
         goto loop

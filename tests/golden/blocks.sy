@@ -33,6 +33,19 @@ fn choose(x) {
     bx lr
 }
 
+fn fall_into_else(x) {
+    #(x - 3)
+    if {
+        if #lo goto end
+        x = 1
+        #(x - 2)
+        if #eq goto end
+    } else {
+        x = 2
+    }
+    bx lr
+}
+
 fn skip(p: *u32) {
     if {
         if p == 0 goto end
@@ -50,6 +63,21 @@ fn with_it(x) {
             x = 5
         }
         if #hi goto loop
+    }
+    bx lr
+}
+
+fn loop_in_if(p: *u32, n) {
+    loop {
+        v @r2 = *p++
+        if {
+            if v == 0 goto end
+            #(n -= 1)
+            if #ne goto loop
+            goto break
+        }
+        #(n -= 1)
+        if #ne goto loop
     }
     bx lr
 }
