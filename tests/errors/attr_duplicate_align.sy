@@ -1,0 +1,4 @@
+// error: duplicate align
+#[align = 8]
+#[align = 8]
+static mut a: u32

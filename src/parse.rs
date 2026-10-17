@@ -32,6 +32,8 @@ pub struct StaticDecl {
     pub ty: Type,
     pub init: Option<Init>,
     pub link_section: Option<String>,
+    /// Minimum alignment from `#[align = n]`, raising the type's
+    pub align: Option<u32>,
 }
 
 /// An initializer for a static.
@@ -64,6 +66,8 @@ pub struct SymbolDecl {
 pub struct Function {
     pub name: Token,
     pub link_section: Option<String>,
+    /// Alignment of the function's start from `#[align = n]`
+    pub align: Option<u32>,
     pub args: Args,
     pub body: Vec<Stmt>,
     /// Location of the first token of each statement, parallel to `body`.
@@ -116,39 +120,48 @@ pub struct Field {
     pub ty: Type,
 }
 
+/// Attributes, which apply to the next item.
+#[derive(Default)]
+struct Attrs {
+    link_section: Option<String>,
+    align: Option<u32>,
+    /// Location of the first attribute
+    loc: Option<Loc>,
+}
+
 pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
     let mut items = vec![];
-    // An attribute applies to the next item
-    let mut link_section: Option<(String, Loc)> = None;
+    let mut attrs = Attrs::default();
     while let Some(tok) = toks.next() {
         if tok.tok == TokBody::Newline {
             continue;
         }
         let loc = tok.loc.clone();
         if tok.tok == TokBody::Octothorpe {
-            let section = parse_link_section(toks).at(&loc)?;
-            if link_section.is_some() {
-                return Err("duplicate link_section".into()).at(&loc);
-            }
-            link_section = Some((section, loc));
+            parse_attr(toks, &mut attrs).at(&loc)?;
+            attrs.loc.get_or_insert(loc);
             continue;
         }
         let is_fn_or_static = tok.match_str("fn") || tok.match_str("static");
-        if let Some((_, attr_loc)) = &link_section
+        if let Some(attr_loc) = &attrs.loc
             && !is_fn_or_static
         {
-            return Err("link_section only applies to fn and static".into()).at(attr_loc);
+            return Err("attributes only apply to fn and static".into()).at(attr_loc);
         }
         if tok.match_str("fn") {
             let mut f = parse_function(toks).at(&loc)?;
-            f.link_section = link_section.take().map(|(s, _)| s);
+            let attrs = std::mem::take(&mut attrs);
+            f.link_section = attrs.link_section;
+            f.align = attrs.align;
             items.push(Item::Function(f));
         } else if tok.match_str("struct") {
             let s = parse_struct(toks).at(&loc)?;
             items.push(Item::Struct(s));
         } else if tok.match_str("static") {
             let mut s = parse_static(toks).at(&loc)?;
-            s.link_section = link_section.take().map(|(s, _)| s);
+            let attrs = std::mem::take(&mut attrs);
+            s.link_section = attrs.link_section;
+            s.align = attrs.align;
             items.push(Item::Static(s));
         } else if tok.match_str("const") {
             let c = parse_const(toks).at(&loc)?;
@@ -160,31 +173,47 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
             return Err("expected fn, struct, static, const or symbol".into()).at(&loc);
         }
     }
-    if let Some((_, attr_loc)) = link_section {
-        return Err("link_section must be followed by fn or static".into()).at(&attr_loc);
+    if let Some(attr_loc) = attrs.loc {
+        return Err("attributes must be followed by fn or static".into()).at(&attr_loc);
     }
     Ok(Program(items))
 }
 
 // Note: "#" has already been consumed
-fn parse_link_section(toks: &mut TokBuf) -> Result<String, Error> {
+fn parse_attr(toks: &mut TokBuf, attrs: &mut Attrs) -> Result<(), Error> {
     toks.expect(&TokBody::OpenBracket)?;
-    if !toks.next().is_some_and(|t| t.match_str("link_section")) {
-        Err("the only attribute is #[link_section = \"name\"]")?;
+    let name = toks.next().ok_or("expected attribute name")?.clone();
+    if !name.match_str("link_section") && !name.match_str("align") {
+        Err("the attributes are #[link_section = \"name\"] and #[align = n]")?;
     }
     toks.expect(&TokBody::Equals)?;
-    let Some(TokBody::Str(section)) = toks.next().map(|t| t.tok.clone()) else {
-        return Err("expected section name string")?;
-    };
+    if name.match_str("link_section") {
+        let Some(TokBody::Str(section)) = toks.next().map(|t| t.tok.clone()) else {
+            return Err("expected section name string")?;
+        };
+        let valid = section
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'$'));
+        if section.is_empty() || !valid {
+            Err(format!("invalid section name {section:?}"))?;
+        }
+        if attrs.link_section.replace(section).is_some() {
+            Err("duplicate link_section")?;
+        }
+    } else {
+        let Some(TokBody::Number(n)) = toks.next().map(|t| t.tok.clone()) else {
+            return Err("expected alignment number")?;
+        };
+        if n <= 0 || n > 1 << 16 || n & (n - 1) != 0 {
+            Err(format!("alignment {n} isn't a power of two up to 65536"))?;
+        }
+        if attrs.align.replace(n as u32).is_some() {
+            Err("duplicate align")?;
+        }
+    }
     toks.expect(&TokBody::CloseBracket)?;
     toks.expect(&TokBody::Newline)?;
-    let valid = section
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'$'));
-    if section.is_empty() || !valid {
-        Err(format!("invalid section name {section:?}"))?;
-    }
-    Ok(section)
+    Ok(())
 }
 
 // Note: "fn" keyword has already been consumed
@@ -199,6 +228,7 @@ fn parse_function(toks: &mut TokBuf) -> Result<Function, Error> {
     Ok(Function {
         name,
         link_section: None,
+        align: None,
         args,
         body,
         locs,
@@ -745,6 +775,7 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
         ty,
         init,
         link_section: None,
+        align: None,
     })
 }
 

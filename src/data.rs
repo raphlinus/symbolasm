@@ -16,7 +16,8 @@ use crate::{
 
 /// Emit a static: a `static mut` without an initializer in .bss, with one
 /// in .data, and an immutable `static` in .text, where it can be reached
-/// with PC-relative loads. `#[link_section]` overrides the section.
+/// with PC-relative loads. `#[link_section]` overrides the section, and
+/// `#[align]` raises the alignment.
 pub fn emit_static(
     s: &StaticDecl,
     types: &mut TypePool,
@@ -35,7 +36,8 @@ pub fn emit_static(
         (None, Some(_), true) => writeln!(w, ".section .data")?,
         (None, Some(_), false) => writeln!(w, ".section .text")?,
     }
-    writeln!(w, ".balign {}", info.align())?;
+    let align = info.align().max(s.align.unwrap_or(1) as usize);
+    writeln!(w, ".balign {align}")?;
     writeln!(w, "{name}:")?;
     match &s.init {
         None => writeln!(w, "    .space {}", info.size())?,

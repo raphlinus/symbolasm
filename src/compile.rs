@@ -176,9 +176,14 @@ impl FnScope {
                     writeln!(w, "{}", section_directive(section, name, true))?;
                     // A new section starts out byte aligned, and Thumb code
                     // needs at least 2; 4 keeps 32 bit fetches aligned.
-                    writeln!(w, ".balign 4")?;
+                    writeln!(w, ".balign {}", func.align.unwrap_or(1).max(4))?;
                 }
-                None => writeln!(w, ".section .text")?,
+                None => {
+                    writeln!(w, ".section .text")?;
+                    if let Some(align) = func.align {
+                        writeln!(w, ".balign {align}")?;
+                    }
+                }
             }
             writeln!(w, ".global {name}")?;
             // Without a function type the symbol is NOTYPE, and linkers

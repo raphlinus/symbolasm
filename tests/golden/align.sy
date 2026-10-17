@@ -1,0 +1,22 @@
+// #[align = n] raises an item's alignment; it never lowers the type's own.
+
+#[align = 8]
+static mut heap: [u32; 16]
+
+#[align = 2]
+static mut table: [u32; 4]
+
+#[align = 16]
+#[link_section = ".ram"]
+static mut buf: [u8; 32]
+
+#[align = 32]
+fn aligned() {
+    bx lr
+}
+
+#[link_section = ".ram"]
+#[align = 8]
+fn in_ram() {
+    bx lr
+}
