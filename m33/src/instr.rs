@@ -39,6 +39,7 @@ impl Cpu {
             0x6 => self.inst_6(inst_16),
             0x7 => self.inst_7(inst_16),
             0x8 => self.inst_8(inst_16),
+            0x9 => self.inst_9(inst_16),
             0xa => self.inst_a(inst_16),
             0xb => self.inst_b(inst_16),
             0xc => self.inst_c(inst_16),
@@ -287,6 +288,17 @@ impl Cpu {
         }
     }
 
+    // Load and store word, SP relative
+    fn inst_9(&mut self, inst: u16) {
+        let rt = ((inst >> 8) & 7) as usize;
+        let addr = self.regs.r[13].wrapping_add((inst & 0xff) as u32 * 4);
+        if inst & 0x800 == 0 {
+            self.store_u32(addr, self.regs.r[rt]);
+        } else {
+            self.regs.r[rt] = self.load_u32(addr);
+        }
+    }
+
     fn inst_a(&mut self, inst: u16) {
         if inst & 0x800 == 0 {
             // ADR (T1 encoding)
@@ -305,6 +317,30 @@ impl Cpu {
     // Miscellaneous instructions, see 3.2.1
     fn inst_b(&mut self, inst: u16) {
         match (inst >> 8) & 0xf {
+            0 => {
+                // ADD, SUB (SP plus immediate)
+                let imm = (inst & 0x7f) as u32 * 4;
+                self.regs.r[13] = if inst & 0x80 == 0 {
+                    self.regs.r[13].wrapping_add(imm)
+                } else {
+                    self.regs.r[13].wrapping_sub(imm)
+                };
+            }
+            6 => {
+                // CPS: interrupts aren't modeled
+            }
+            10 => {
+                // reverse bytes, table 3-17
+                let rm = ((inst >> 3) & 7) as usize;
+                let rd = (inst & 7) as usize;
+                let rrm = self.regs.r[rm];
+                self.regs.r[rd] = match (inst >> 6) & 3 {
+                    0 => rrm.swap_bytes(),
+                    1 => rev16(rrm),
+                    3 => revsh(rrm),
+                    _ => todo!("inst {inst:04x} not implemented"),
+                };
+            }
             2 => {
                 // sign/zero extend, see table 3-16
                 let opc = (inst >> 6) & 3;
@@ -403,45 +439,185 @@ impl Cpu {
             // unconditional branch, T1 encoding
             let imm = (((inst as i32) << 21) >> 20) as u32;
             self.regs.r[15] = self.regs.r[15].wrapping_add(imm).wrapping_add(2);
-        } else {
-            // 32 bit instructions
-            let inst_2 = self.load_u16(self.regs.r[15]);
-            self.regs.r[15] += 2;
-            let rn = (inst & 0xf) as usize;
-            if inst & 0xe00 == 0xa00 {
-                // Data processing, constant shift
-                let rd = ((inst_2 >> 8) & 0xf) as usize;
-                let rm = (inst_2 & 0xf) as usize;
-                let (shift_t, shift_n) = decode_imm_shift(inst_2);
-                let shifted = self.apply_imm_shift(self.regs.r[rm], shift_t, shift_n);
-                let op = (inst >> 5) & 0xf;
-                let set = inst & 0x10 != 0;
-                // TODO: the shifter's carry out, for logical ops with S
-                let rrn = if rn == 15 { 0 } else { self.regs.r[rn] };
-                self.data_processing(op, rd, rrn, shifted, set);
-            } else if inst & 0xe50 == 0x840 {
-                // STRD (immediate)
-                let rt = ((inst_2 >> 12) & 0xf) as usize;
-                let rt2 = ((inst_2 >> 8) & 0xf) as usize;
-                let imm32 = (inst_2 & 0xff) as u32 * 4;
-                let index = (inst & 0x100) != 0;
-                let add = (inst & 0x80) != 0;
-                let wback = (inst & 0x20) != 0;
+            return;
+        }
+        // 32 bit instructions
+        let inst_2 = self.load_u16(self.regs.r[15]);
+        self.regs.r[15] += 2;
+        let rn = (inst & 0xf) as usize;
+        if inst & 0xe00 == 0xa00 {
+            // data processing, shifted register, table 3-25
+            let rd = ((inst_2 >> 8) & 0xf) as usize;
+            let rm = (inst_2 & 0xf) as usize;
+            let op = (inst >> 5) & 0xf;
+            let set = inst & 0x10 != 0;
+            let (shift_t, shift_n) = decode_imm_shift(inst_2);
+            let (shifted, carry) = self.shift_c(self.regs.r[rm], shift_t, shift_n);
+            if op == 6 {
+                // PKHBT, PKHTB: the tb bit is the shift type's top bit
                 let rrn = self.regs.r[rn];
-                let offset_addr = if add { rrn + imm32 } else { rrn - imm32 };
-                let addr = if index { offset_addr } else { rrn };
-                self.store_u32(addr, self.regs.r[rt]);
-                self.store_u32(addr + 4, self.regs.r[rt2]);
-                if wback {
-                    self.regs.r[rn] = offset_addr;
-                }
-            } else if inst == 0xe8bd {
-                self.pop_regs(inst_2);
-            } else if inst == 0xe92d {
-                self.push_regs(inst_2);
-            } else {
-                todo!("inst {inst:04x} not implemented");
+                self.regs.r[rd] = if inst_2 & 0x20 == 0 {
+                    (shifted & 0xffff_0000) | (rrn & 0xffff)
+                } else {
+                    (rrn & 0xffff_0000) | (shifted & 0xffff)
+                };
+                return;
             }
+            // MOV and MVN are ORR and ORN with rn = pc
+            let rrn = if rn == 15 { 0 } else { self.regs.r[rn] };
+            self.data_processing(op, rd, rrn, shifted, set, carry);
+        } else if inst & 0xe40 == 0x800 {
+            self.load_store_multiple(inst, inst_2);
+        } else if inst & 0xe40 == 0x840 {
+            self.load_store_dual_exclusive(inst, inst_2);
+        } else {
+            todo!("inst {inst:04x} {inst_2:04x} not implemented");
+        }
+    }
+
+    /// LDM, STM, PUSH and POP, table 3-11
+    fn load_store_multiple(&mut self, inst: u16, inst_2: u16) {
+        let rn = (inst & 0xf) as usize;
+        let load = inst & 0x10 != 0;
+        let wback = inst & 0x20 != 0;
+        let n = inst_2.count_ones();
+        let rrn = self.regs.r[rn];
+        // increment after, or decrement before
+        let (start, end) = match (inst >> 7) & 3 {
+            1 => (rrn, rrn.wrapping_add(n * 4)),
+            2 => (rrn.wrapping_sub(n * 4), rrn.wrapping_sub(n * 4)),
+            _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+        };
+        let mut addr = start;
+        if load {
+            let mut vals = [0; 16];
+            for (i, val) in vals.iter_mut().enumerate() {
+                if inst_2 & (1 << i) != 0 {
+                    *val = self.load_u32(addr);
+                    addr = addr.wrapping_add(4);
+                }
+            }
+            if wback && inst_2 & (1 << rn) == 0 {
+                self.regs.r[rn] = end;
+            }
+            for (i, val) in vals.iter().enumerate() {
+                if inst_2 & (1 << i) != 0 {
+                    self.regs.r[i] = *val;
+                }
+            }
+            self.regs.r[15] &= !1;
+        } else {
+            for i in 0..16 {
+                if inst_2 & (1 << i) != 0 {
+                    self.store_u32(addr, self.regs.r[i]);
+                    addr = addr.wrapping_add(4);
+                }
+            }
+            if wback {
+                self.regs.r[rn] = end;
+            }
+        }
+    }
+
+    /// LDRD and STRD, the exclusives, load-acquire and store-release, and
+    /// table branches, table 3-12
+    fn load_store_dual_exclusive(&mut self, inst: u16, inst_2: u16) {
+        let rn = (inst & 0xf) as usize;
+        let rt = ((inst_2 >> 12) & 0xf) as usize;
+        let rd = ((inst_2 >> 8) & 0xf) as usize;
+        let op1 = (inst >> 7) & 3;
+        let op2 = (inst >> 4) & 3;
+        let rrn = self.regs.r[rn];
+        if op1 >= 2 || op2 >= 2 {
+            // LDRD, STRD (immediate); literal when rn is pc
+            let base = if rn == 15 { rrn & !3 } else { rrn };
+            let imm = (inst_2 & 0xff) as u32 * 4;
+            let index = inst & 0x100 != 0;
+            let add = inst & 0x80 != 0;
+            let wback = inst & 0x20 != 0;
+            let offset_addr = if add {
+                base.wrapping_add(imm)
+            } else {
+                base.wrapping_sub(imm)
+            };
+            let addr = if index { offset_addr } else { base };
+            if inst & 0x10 != 0 {
+                self.regs.r[rt] = self.load_u32(addr);
+                self.regs.r[rd] = self.load_u32(addr.wrapping_add(4));
+            } else {
+                self.store_u32(addr, self.regs.r[rt]);
+                self.store_u32(addr.wrapping_add(4), self.regs.r[rd]);
+            }
+            if wback {
+                self.regs.r[rn] = offset_addr;
+            }
+        } else if op1 == 0 {
+            // LDREX, STREX
+            let addr = rrn.wrapping_add((inst_2 & 0xff) as u32 * 4);
+            if op2 == 1 {
+                self.regs.r[rt] = self.load_u32(addr);
+                self.exclusive = true;
+            } else {
+                self.store_exclusive(rd, addr, self.regs.r[rt], 4);
+            }
+        } else {
+            // the byte and halfword exclusives, acquire and release, and
+            // table branches, selected by op3
+            let op3 = (inst_2 >> 4) & 0xf;
+            let size = 1 << (op3 & 3);
+            let rd = (inst_2 & 0xf) as usize;
+            if op2 == 1 {
+                match op3 {
+                    0 | 1 => {
+                        // TBB, TBH
+                        let rm = (inst_2 & 0xf) as usize;
+                        let base = if rn == 15 { self.regs.r[15] } else { rrn };
+                        let half = if op3 == 0 {
+                            self.load_u8(base.wrapping_add(self.regs.r[rm])) as u32
+                        } else {
+                            self.load_u16(base.wrapping_add(self.regs.r[rm] << 1)) as u32
+                        };
+                        self.regs.r[15] = self.regs.r[15].wrapping_add(half * 2);
+                    }
+                    4 | 5 | 8..=10 | 12..=14 => {
+                        // LDREXB/H, LDA, LDAEX
+                        self.regs.r[rt] = match size {
+                            1 => self.load_u8(rrn) as u32,
+                            2 => self.load_u16(rrn) as u32,
+                            _ => self.load_u32(rrn),
+                        };
+                        if op3 & 4 != 0 {
+                            self.exclusive = true;
+                        }
+                    }
+                    _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+                }
+            } else {
+                let val = self.regs.r[rt];
+                match op3 {
+                    4 | 5 | 12..=14 => self.store_exclusive(rd, rrn, val, size),
+                    8..=10 => self.store_sized(rrn, val, size),
+                    _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+                }
+            }
+        }
+    }
+
+    fn store_exclusive(&mut self, rd: usize, addr: u32, val: u32, size: u32) {
+        if self.exclusive {
+            self.store_sized(addr, val, size);
+            self.regs.r[rd] = 0;
+        } else {
+            self.regs.r[rd] = 1;
+        }
+        self.exclusive = false;
+    }
+
+    fn store_sized(&mut self, addr: u32, val: u32, size: u32) {
+        match size {
+            1 => self.store_u8(addr, val as u8),
+            2 => self.store_u16(addr, val as u16),
+            _ => self.store_u32(addr, val),
         }
     }
 
@@ -449,86 +625,9 @@ impl Cpu {
         let inst_2 = self.load_u16(self.regs.r[15]);
         self.regs.r[15] += 2;
         if inst & 0x800 == 0 && (inst_2 & 0x8000) != 0 {
-            todo!("branches");
-        } else if inst & 0xbf0 == 0x240 {
-            // MOV (immediate, T3 encoding)
-            let rd = ((inst_2 >> 8) & 0xf) as usize;
-            let imm = (inst_2 & 0xff)
-                | ((inst_2 & 0x7000) >> 4)
-                | ((inst & 0x400) << 1)
-                | ((inst & 0xf) << 12);
-            self.regs.r[rd] = imm as u32;
-        } else if inst & 0xbff == 0x20f {
-            // ADR (T3 encoding)
-            let imm = ((inst & 0x400) << 1) | ((inst_2 & 0x7000) >> 4) | (inst_2 & 0xff);
-            let rd = ((inst_2 >> 8) & 0xf) as usize;
-            let align_pc = self.regs.r[15] & !4;
-            self.regs.r[rd] = align_pc.wrapping_add(imm as u32);
+            self.branch_misc(inst, inst_2);
         } else if inst & 0xe00 == 0x800 {
-            // load and store single data item
-            let rn = (inst & 0xf) as usize;
-            let rrn = self.regs.r[rn];
-            let rt = ((inst_2 >> 12) & 0xf) as usize;
-            let size = (inst >> 5) & 3;
-            let addr = if (inst & 0x80) != 0 {
-                let imm12 = inst_2 as u32 & 0xfff;
-                rrn + imm12
-            } else if rn == 15 {
-                let imm12 = inst_2 as u32 & 0xfff;
-                rrn - imm12
-            } else if inst_2 & 0xf00 == 0xc00 {
-                let imm8 = inst_2 as u32 & 0xff;
-                rrn - imm8
-            } else if inst_2 & 0xd00 == 0x900 {
-                // post indexed
-                rrn
-            } else if inst_2 & 0xd00 == 0xd00 {
-                let imm = inst_2 as u32 & 0xff;
-                if (inst_2 & 0x200) != 0 {
-                    rrn + imm
-                } else {
-                    rrn - imm
-                }
-            } else if inst_2 & 0xfc0 == 0 {
-                let shift = (inst_2 >> 4) & 3;
-                let rm = (inst_2 & 0xf) as usize;
-                rrn + (self.regs.r[rm] << shift)
-            } else {
-                todo!()
-            };
-            if inst & 0x10 != 0 {
-                if size == 2 {
-                    self.regs.r[rt] = self.load_u32(addr);
-                } else {
-                    let sign_extend = inst & 0x100 != 0;
-                    if size == 0 && sign_extend {
-                        self.regs.r[rt] = self.load_u8(addr) as i8 as u32;
-                    } else if size == 0 {
-                        self.regs.r[rt] = self.load_u8(addr) as u32;
-                    } else if sign_extend {
-                        self.regs.r[rt] = self.load_u16(addr) as i16 as u32;
-                    } else {
-                        self.regs.r[rt] = self.load_u16(addr) as u32;
-                    }
-                }
-            } else {
-                let val = self.regs.r[rt];
-                match size {
-                    0 => self.store_u8(addr, val as u8),
-                    1 => self.store_u16(addr, val as u16),
-                    2 => self.store_u32(addr, val),
-                    _ => todo!(),
-                }
-            }
-            // handle post-indexing
-            if inst_2 & 0xd00 == 0x900 {
-                let imm = inst_2 as u32 & 0xff;
-                self.regs.r[rn] = if (inst_2 & 0x200) != 0 {
-                    rrn + imm
-                } else {
-                    rrn - imm
-                };
-            }
+            self.load_store_single(inst, inst_2);
         } else if inst & 0xa00 == 0 {
             // data processing, modified 12-bit immediate (see 3.3.1)
             let op = (inst >> 5) & 0xf;
@@ -537,80 +636,312 @@ impl Cpu {
             let rrn = if rn == 15 { 0 } else { self.regs.r[rn] };
             let rd = ((inst_2 >> 8) & 0xf) as usize;
             let imm = ((inst & 0x400) << 1) | ((inst_2 & 0x7000) >> 4) | (inst_2 & 0xff);
-            let imm32 = thumb_expand_imm(imm);
+            let (imm32, carry) = self.thumb_expand_imm_c(imm);
             let set = inst & 0x10 != 0;
-            self.data_processing(op, rd, rrn, imm32, set);
-        } else if inst & 0xf10 == 0x300 {
-            // bit field operations, saturation with shift (see 3.3.1)
-            let op = (inst >> 5) & 7;
-            let rn = (inst & 0xf) as usize;
-            let rrn = self.regs.r[rn];
-            let rd = ((inst_2 >> 8) & 0xf) as usize;
-            let imm5 = inst_2 & 0x1f;
-            let imm3_2 = ((inst_2 >> 6) & 3) | ((inst_2 & 0x7000) >> 10);
-            match op {
-                3 => {
-                    // BFI
-                    let mask = (2u32 << imm5).wrapping_sub(1 << imm3_2);
-                    self.regs.r[rd] = (self.regs.r[rd] & !mask) | ((rrn << imm3_2) & mask);
-                }
-                6 => {
-                    // UBFX
-                    self.regs.r[rd] = (rrn >> imm3_2) & ((2u32 << imm5).wrapping_sub(1));
-                }
-                _ => todo!(),
-            }
+            self.data_processing(op, rd, rrn, imm32, set, carry);
+        } else if inst & 0xa00 == 0x200 {
+            self.plain_immediate(inst, inst_2);
         } else if inst & 0xf00 == 0xa00 {
-            // rows 3-7 of figure 3-5
+            self.data_processing_register(inst, inst_2);
+        } else if inst & 0xf80 == 0xb00 {
+            // multiply and multiply accumulate, table 3-30
             let rn = (inst & 0xf) as usize;
+            let ra = ((inst_2 >> 12) & 0xf) as usize;
             let rd = ((inst_2 >> 8) & 0xf) as usize;
             let rm = (inst_2 & 0xf) as usize;
-            if inst & 0x80 == 0 {
-                if inst_2 & 0x80 == 0 {
-                    // register controlled shift, table 3-27
-                    todo!();
-                } else {
-                    // sign or zero extension, with optional addition, table 3-28
-                    let op = (inst >> 4) & 7;
-                    if rn == 15 {
-                        match op {
-                            5 => {
-                                // UXTB
-                                let rot = (inst_2 as u32 >> 4) & 3;
-                                self.regs.r[rd] =
-                                    self.regs.r[rm].rotate_right(rot * 8) as u8 as u32;
-                            }
-                            _ => todo!(),
-                        }
-                    } else {
-                        todo!(); // might hoist this
-                    }
+            let op1 = (inst >> 4) & 7;
+            let op2 = (inst_2 >> 4) & 3;
+            let product = self.regs.r[rn].wrapping_mul(self.regs.r[rm]);
+            self.regs.r[rd] = match (op1, op2) {
+                // MUL
+                (0, 0) if ra == 15 => product,
+                // MLA
+                (0, 0) => self.regs.r[ra].wrapping_add(product),
+                // MLS
+                (0, 1) => self.regs.r[ra].wrapping_sub(product),
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            };
+        } else if inst & 0xf80 == 0xb80 {
+            // long multiply and divide, table 3-31
+            let rn = self.regs.r[(inst & 0xf) as usize];
+            let rlo = ((inst_2 >> 12) & 0xf) as usize;
+            let rd = ((inst_2 >> 8) & 0xf) as usize;
+            let rm = self.regs.r[(inst_2 & 0xf) as usize];
+            let op1 = (inst >> 4) & 7;
+            let op2 = (inst_2 >> 4) & 0xf;
+            let acc = ((self.regs.r[rd] as u64) << 32) | self.regs.r[rlo] as u64;
+            let long = match (op1, op2) {
+                // SMULL, UMULL, SMLAL, UMLAL
+                (0, 0) => (rn as i32 as i64 * rm as i32 as i64) as u64,
+                (2, 0) => rn as u64 * rm as u64,
+                (4, 0) => acc.wrapping_add((rn as i32 as i64 * rm as i32 as i64) as u64),
+                (6, 0) => acc.wrapping_add(rn as u64 * rm as u64),
+                // SDIV, UDIV: divide by zero gives 0, without DIV_0_TRP
+                (1, 15) => {
+                    self.regs.r[rd] = (rn as i32).checked_div(rm as i32).unwrap_or(
+                        // i32::MIN / -1 overflows to i32::MIN
+                        if rm == 0 { 0 } else { i32::MIN },
+                    ) as u32;
+                    return;
                 }
-            } else if inst_2 & 0x80 == 0 {
-                // SIMD add or subtract, table 3-29
-                todo!();
-            } else {
-                // other three register data processing, table 3-31
-                let op = (inst >> 4) & 7;
-                let op2 = (inst_2 >> 4) & 7;
-                match (op, op2) {
-                    (1, 2) => self.regs.r[rd] = self.regs.r[rm].reverse_bits(),
-                    (3, 0) => self.regs.r[rd] = self.regs.r[rm].leading_zeros(),
-                    _ => todo!("inst {inst:04x} {inst_2:04x}"),
+                (3, 15) => {
+                    self.regs.r[rd] = rn.checked_div(rm).unwrap_or(0);
+                    return;
                 }
-            }
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            };
+            self.regs.r[rlo] = long as u32;
+            self.regs.r[rd] = (long >> 32) as u32;
         } else {
-            todo!("inst {inst:04x} not implemented");
+            todo!("inst {inst:04x} {inst_2:04x} not implemented");
         }
     }
-}
 
-impl Cpu {
+    /// Branches and miscellaneous control, table 3-9
+    fn branch_misc(&mut self, inst: u16, inst_2: u16) {
+        let s = (inst >> 10) as u32 & 1;
+        let j1 = (inst_2 >> 13) as u32 & 1;
+        let j2 = (inst_2 >> 11) as u32 & 1;
+        let imm11 = (inst_2 & 0x7ff) as u32;
+        if inst_2 & 0x1000 == 0 {
+            let cond = (inst >> 6) & 0xf;
+            if cond >= 0xe {
+                // hints, barriers, MSR and MRS: nothing to model
+                return;
+            }
+            // B, T3 encoding: conditional
+            let imm6 = (inst & 0x3f) as u32;
+            let imm = (s << 20) | (j2 << 19) | (j1 << 18) | (imm6 << 12) | (imm11 << 1);
+            let imm = ((imm << 11) as i32 >> 11) as u32;
+            if self.eval_cond(cond) {
+                self.regs.r[15] = self.regs.r[15].wrapping_add(imm);
+            }
+        } else {
+            // B, T4 encoding, and BL
+            let i1 = !(j1 ^ s) & 1;
+            let i2 = !(j2 ^ s) & 1;
+            let imm10 = (inst & 0x3ff) as u32;
+            let imm = (s << 24) | (i1 << 23) | (i2 << 22) | (imm10 << 12) | (imm11 << 1);
+            let imm = ((imm << 7) as i32 >> 7) as u32;
+            if inst_2 & 0x4000 != 0 {
+                self.regs.r[14] = self.regs.r[15] | 1;
+            }
+            self.regs.r[15] = self.regs.r[15].wrapping_add(imm);
+        }
+    }
+
+    /// Load and store single data item, tables 3-13 to 3-15
+    fn load_store_single(&mut self, inst: u16, inst_2: u16) {
+        let rn = (inst & 0xf) as usize;
+        let rt = ((inst_2 >> 12) & 0xf) as usize;
+        let size = (inst >> 5) & 3;
+        let load = inst & 0x10 != 0;
+        if load && rt == 15 && size != 2 {
+            // preload hints
+            return;
+        }
+        let rrn = self.regs.r[rn];
+        let imm8 = inst_2 as u32 & 0xff;
+        let mut wback = None;
+        let addr = if rn == 15 {
+            // literal: the U bit is in the first halfword
+            let imm12 = inst_2 as u32 & 0xfff;
+            let base = rrn & !3;
+            if inst & 0x80 != 0 {
+                base.wrapping_add(imm12)
+            } else {
+                base.wrapping_sub(imm12)
+            }
+        } else if inst & 0x80 != 0 {
+            rrn.wrapping_add(inst_2 as u32 & 0xfff)
+        } else if inst_2 & 0x800 != 0 {
+            // imm8 with P, U and W bits
+            let add = inst_2 & 0x200 != 0;
+            let offset_addr = if add {
+                rrn.wrapping_add(imm8)
+            } else {
+                rrn.wrapping_sub(imm8)
+            };
+            let index = inst_2 & 0x400 != 0;
+            if inst_2 & 0x100 != 0 {
+                wback = Some(offset_addr);
+            }
+            if index { offset_addr } else { rrn }
+        } else if inst_2 & 0xfc0 == 0 {
+            let shift = (inst_2 >> 4) & 3;
+            let rm = (inst_2 & 0xf) as usize;
+            rrn.wrapping_add(self.regs.r[rm] << shift)
+        } else {
+            todo!("inst {inst:04x} {inst_2:04x} not implemented");
+        };
+        if load {
+            let sign_extend = inst & 0x100 != 0;
+            let val = match (size, sign_extend) {
+                (0, false) => self.load_u8(addr) as u32,
+                (0, true) => self.load_u8(addr) as i8 as u32,
+                (1, false) => self.load_u16(addr) as u32,
+                (1, true) => self.load_u16(addr) as i16 as u32,
+                (2, _) => self.load_u32(addr),
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            };
+            if let Some(a) = wback {
+                self.regs.r[rn] = a;
+            }
+            self.regs.r[rt] = val;
+            if rt == 15 {
+                self.regs.r[15] &= !1;
+            }
+        } else {
+            let val = self.regs.r[rt];
+            match size {
+                0 => self.store_u8(addr, val as u8),
+                1 => self.store_u16(addr, val as u16),
+                2 => self.store_u32(addr, val),
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            }
+            if let Some(a) = wback {
+                self.regs.r[rn] = a;
+            }
+        }
+    }
+
+    /// Data processing, plain binary immediate, table 3-24
+    fn plain_immediate(&mut self, inst: u16, inst_2: u16) {
+        let rn = (inst & 0xf) as usize;
+        let rd = ((inst_2 >> 8) & 0xf) as usize;
+        let rrn = self.regs.r[rn];
+        let imm12 = (((inst & 0x400) << 1) | ((inst_2 & 0x7000) >> 4) | (inst_2 & 0xff)) as u32;
+        let imm16 = imm12 | ((inst as u32 & 0xf) << 12);
+        // for the bit field and saturating ops
+        let lsb = ((inst_2 as u32 >> 6) & 3) | ((inst_2 as u32 & 0x7000) >> 10);
+        let field = inst_2 as u32 & 0x1f;
+        self.regs.r[rd] = match (inst >> 4) & 0x1f {
+            // ADDW, SUBW, and ADR when rn is pc
+            0 if rn == 15 => (rrn & !3).wrapping_add(imm12),
+            0 => rrn.wrapping_add(imm12),
+            0xa if rn == 15 => (rrn & !3).wrapping_sub(imm12),
+            0xa => rrn.wrapping_sub(imm12),
+            // MOVW, MOVT
+            0x4 => imm16,
+            0xc => (self.regs.r[rd] & 0xffff) | (imm16 << 16),
+            // SSAT, USAT: the sh bit selects asr, and Q isn't modeled
+            0x10 | 0x12 | 0x18 | 0x1a => {
+                let shift_t = if inst & 0x20 != 0 {
+                    ShiftType::Asr
+                } else {
+                    ShiftType::Lsl
+                };
+                let val = self.shift_c(rrn, shift_t, lsb).0 as i32 as i64;
+                if inst & 0x80 == 0 {
+                    let bits = field + 1;
+                    let max = (1i64 << (bits - 1)) - 1;
+                    val.clamp(-max - 1, max) as u32
+                } else {
+                    let max = (1i64 << field) - 1;
+                    val.clamp(0, max) as u32
+                }
+            }
+            // SBFX, UBFX
+            0x14 | 0x1c => {
+                let width = field + 1;
+                let v = (rrn as u64 >> lsb) as u32;
+                if width == 32 {
+                    v
+                } else if inst & 0x80 != 0 {
+                    v & ((1 << width) - 1)
+                } else {
+                    ((v << (32 - width)) as i32 >> (32 - width)) as u32
+                }
+            }
+            // BFI, and BFC when rn is pc
+            0x16 => {
+                let msb = field;
+                let mask = (((2u64 << msb) - 1) as u32) & !((1u32 << lsb) - 1);
+                let src = if rn == 15 { 0 } else { rrn << lsb };
+                (self.regs.r[rd] & !mask) | (src & mask)
+            }
+            _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+        };
+    }
+
+    /// Data processing (register), table 3-26
+    fn data_processing_register(&mut self, inst: u16, inst_2: u16) {
+        let rn = (inst & 0xf) as usize;
+        let rd = ((inst_2 >> 8) & 0xf) as usize;
+        let rm = (inst_2 & 0xf) as usize;
+        let rrm = self.regs.r[rm];
+        if inst & 0x80 == 0 && inst_2 & 0xf0 == 0 {
+            // LSL, LSR, ASR, ROR (register)
+            let shift_t = match (inst >> 5) & 3 {
+                0 => ShiftType::Lsl,
+                1 => ShiftType::Lsr,
+                2 => ShiftType::Asr,
+                _ => ShiftType::Ror,
+            };
+            let (val, carry) = self.shift_c(self.regs.r[rn], shift_t, rrm & 0xff);
+            self.regs.r[rd] = val;
+            if inst & 0x10 != 0 {
+                self.set_nz(val);
+                self.set_c(carry);
+            }
+        } else if inst & 0x80 == 0 && inst_2 & 0x80 != 0 {
+            // sign or zero extend, with optional add, table 3-28
+            let rot = ((inst_2 as u32 >> 4) & 3) * 8;
+            let v = rrm.rotate_right(rot);
+            let ext = match (inst >> 4) & 7 {
+                0 => v as i16 as u32,
+                1 => v as u16 as u32,
+                4 => v as i8 as u32,
+                5 => v as u8 as u32,
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            };
+            let add = if rn == 15 { 0 } else { self.regs.r[rn] };
+            self.regs.r[rd] = add.wrapping_add(ext);
+        } else if inst & 0x80 != 0 && inst_2 & 0xc0 == 0x80 {
+            // miscellaneous operations, table 3-30
+            let op = (inst >> 4) & 7;
+            let op2 = (inst_2 >> 4) & 7;
+            self.regs.r[rd] = match (op, op2) {
+                (1, 0) => rrm.swap_bytes(),
+                (1, 1) => rev16(rrm),
+                (1, 2) => rrm.reverse_bits(),
+                (1, 3) => revsh(rrm),
+                (3, 0) => rrm.leading_zeros(),
+                _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
+            };
+        } else {
+            // parallel add and subtract
+            todo!("inst {inst:04x} {inst_2:04x} not implemented");
+        }
+    }
+
+    /// ThumbExpandImm_C: the carry out is the top bit when the value is
+    /// rotated, otherwise unchanged.
+    fn thumb_expand_imm_c(&self, imm12: u16) -> (u32, u32) {
+        if (imm12 >> 10) == 0 {
+            const EXP: [u32; 4] = [1, 0x10001, 0x1000100, 0x1010101];
+            let carry = (self.regs.psr >> 29) & 1;
+            (EXP[imm12 as usize >> 8] * (imm12 as u32 & 0xff), carry)
+        } else {
+            let unrotated = 0x80 | (imm12 as u32 & 0x7f);
+            let v = unrotated.rotate_right(imm12 as u32 >> 7);
+            (v, v >> 31)
+        }
+    }
+
     /// 32 bit data processing, with an immediate or shifted register
     /// operand (tables 3-21 and 3-25). Rd = 15 with S set is the test form
-    /// (TST, TEQ, CMN, CMP). The carry out of a shift or rotated immediate
-    /// isn't modeled for logical ops.
-    fn data_processing(&mut self, op: u16, rd: usize, rn: u32, operand: u32, set: bool) {
+    /// (TST, TEQ, CMN, CMP). Logical ops with S set C to `carry`, the
+    /// carry out of the shift or immediate expansion.
+    fn data_processing(
+        &mut self,
+        op: u16,
+        rd: usize,
+        rn: u32,
+        operand: u32,
+        set: bool,
+        carry: u32,
+    ) {
         let carry_in = (self.regs.psr >> 29) & 1;
         let test = rd == 15 && set;
         let val = match op {
@@ -651,6 +982,7 @@ impl Cpu {
         };
         if set {
             self.set_nz(val);
+            self.set_c(carry);
         }
         if !test {
             self.regs.r[rd] = val;
@@ -670,12 +1002,10 @@ fn decode_imm_shift(inst_2: u16) -> (ShiftType, u32) {
     }
 }
 
-fn thumb_expand_imm(imm12: u16) -> u32 {
-    if (imm12 >> 10) == 0 {
-        const EXP: [u32; 4] = [1, 0x10001, 0x1000100, 0x1010101];
-        EXP[imm12 as usize >> 8] * (imm12 as u32 & 0xff)
-    } else {
-        let unrotated = 0x80 | (imm12 as u32 & 0x7f);
-        unrotated.rotate_right(imm12 as u32 >> 7)
-    }
+fn rev16(v: u32) -> u32 {
+    ((v & 0x00ff_00ff) << 8) | ((v >> 8) & 0x00ff_00ff)
+}
+
+fn revsh(v: u32) -> u32 {
+    (v as u16).swap_bytes() as i16 as u32
 }

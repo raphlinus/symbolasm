@@ -6,6 +6,9 @@ pub struct Cpu {
     pub it_state: u8,
     /// Print each instruction as it executes.
     pub trace: bool,
+    /// The local exclusive monitor: set by a load exclusive, cleared by a
+    /// store exclusive, which only stores when it's set.
+    pub exclusive: bool,
 }
 
 /// Return address that ends `Cpu::call`.
@@ -17,6 +20,7 @@ pub struct Regs {
     pub psr: u32,
 }
 
+#[derive(Clone, Copy)]
 pub enum ShiftType {
     Lsl,
     Lsr,
@@ -35,6 +39,7 @@ impl Cpu {
             halted,
             it_state: 0,
             trace: false,
+            exclusive: false,
         }
     }
 
@@ -113,6 +118,8 @@ impl Cpu {
                 self.regs.r[i as usize] = self.pop();
             }
         }
+        // Loading pc interworks: bit 0 selects Thumb, always set here
+        self.regs.r[15] &= !1;
     }
 
     pub fn push_regs(&mut self, regs: u16) {
@@ -124,12 +131,31 @@ impl Cpu {
     }
 
     pub fn apply_imm_shift(&self, val: u32, shift_t: ShiftType, shift_n: u32) -> u32 {
+        self.shift_c(val, shift_t, shift_n).0
+    }
+
+    /// Shift, returning the result and the carry out. An amount of 0
+    /// leaves the value and carry unchanged; amounts past 32 are allowed,
+    /// as register shifts use the bottom byte of the register.
+    pub fn shift_c(&self, val: u32, shift_t: ShiftType, n: u32) -> (u32, u32) {
+        let carry_in = (self.regs.psr >> 29) & 1;
+        if n == 0 {
+            return (val, carry_in);
+        }
         match shift_t {
-            ShiftType::Lsl => val << shift_n,
-            ShiftType::Lsr => ((val as u64) >> shift_n) as u32,
-            ShiftType::Asr => (((val as i32) as i64) >> shift_n) as u32,
-            ShiftType::Rrx => ((self.regs.psr << 2) & 0x80000000) | (val >> shift_n),
-            ShiftType::Ror => val.rotate_right(shift_n),
+            ShiftType::Lsl if n < 32 => (val << n, (val >> (32 - n)) & 1),
+            ShiftType::Lsl if n == 32 => (0, val & 1),
+            ShiftType::Lsl => (0, 0),
+            ShiftType::Lsr if n < 32 => (val >> n, (val >> (n - 1)) & 1),
+            ShiftType::Lsr if n == 32 => (0, val >> 31),
+            ShiftType::Lsr => (0, 0),
+            ShiftType::Asr if n < 32 => (((val as i32) >> n) as u32, (val >> (n - 1)) & 1),
+            ShiftType::Asr => (((val as i32) >> 31) as u32, val >> 31),
+            ShiftType::Rrx => ((carry_in << 31) | (val >> 1), val & 1),
+            ShiftType::Ror => {
+                let v = val.rotate_right(n % 32);
+                (v, v >> 31)
+            }
         }
     }
 }
