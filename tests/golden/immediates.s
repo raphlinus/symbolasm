@@ -17,6 +17,8 @@ fit:
     subs r1, r1, #4096
     adds r1, r1, #4278190080
     mov r2, #4278255360
+    mvn r2, #0
+    mvn r2, #255
     ldr r2, [r0, #-4]
     ldr r2, [r0, #4095]
     bx lr

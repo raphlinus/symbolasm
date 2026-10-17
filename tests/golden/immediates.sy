@@ -12,6 +12,9 @@ fn fit(a: u32, b: u32) {
     #(b -= 4096)
     #(b += 0xff000000)
     c @r2 = 0xff00ff00
+    // mvn when the inverted value fits in 8 bits, even if mov could encode it
+    c = -1
+    c = 0xffffff00
     c = *(a - 4)
     c = *(a + 4095)
     bx lr

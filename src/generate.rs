@@ -200,7 +200,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 } else {
                     with_flags
                 };
-                if imm16_ok || is_imm8m(*n) {
+                if imm16_ok || (is_imm8m(*n) && !n >= 0x100) {
                     self.start_insn_flags("mov", with_flags, if_state)?;
                     write!(self.w, " ")?;
                     write_reg(lhs, self.w)?;
