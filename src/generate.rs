@@ -285,6 +285,30 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 let with_flags = self.narrow_or(with_flags, 0xff);
                 self.gen_intrinsic(lhs, insn, args, with_flags, if_state)?
             }
+            // Multiply accumulate: a + b * c is mla, a - b * c is mls
+            Body::Binop(acc, op @ (BinOp::Add | BinOp::Sub), b)
+                if let Body::Binop(x, BinOp::Mul, y) = &b.body =>
+            {
+                let insn = if *op == BinOp::Add { "mla" } else { "mls" };
+                if with_flags == WithFlags::Yes {
+                    Err(format!("{insn} can't set flags"))?;
+                }
+                let regs = [acc, x, y].map(|e| match e.body {
+                    Body::Reg(r) => Some(r),
+                    _ => None,
+                });
+                let [Some(ra), Some(rn), Some(rm)] = regs else {
+                    return Err(format!("{insn} operands must all be registers"))?;
+                };
+                self.start_insn(insn, if_state)?;
+                write!(self.w, " ")?;
+                for r in [lhs, rn, rm] {
+                    write_reg(r, self.w)?;
+                    write!(self.w, ", ")?;
+                }
+                write_reg(ra, self.w)?;
+                writeln!(self.w)?;
+            }
             // The address of a static's field, resolved by the linker
             Body::Binop(a, BinOp::Add, b)
                 if let Body::Sym(sym) = &a.body

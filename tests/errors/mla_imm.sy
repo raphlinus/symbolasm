@@ -1,0 +1,5 @@
+// error: mla operands must all be registers
+fn f(a: u32, b: u32) {
+    a = a + b * 3
+    bx lr
+}
