@@ -1,0 +1,5 @@
+[package]
+name = "demo-rs"
+authors     = ["Raph Levien <raph.levien@gmail.com>"]
+description = "Rust binary"
+edition  = "2024"
