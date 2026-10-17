@@ -87,7 +87,7 @@ impl Regmap {
                     }
                 }
             }
-            Stmt::Insn(Insn::Bl(_)) => {
+            Stmt::Insn(Insn::Bl(_) | Insn::Blx(_)) => {
                 // By ABI convention
                 for r in [0, 1, 2, 3, 12, 14] {
                     self.kill(r);

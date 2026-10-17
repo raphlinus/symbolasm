@@ -23,6 +23,8 @@ pub enum Insn {
     BCond(String, String),
     B(String),
     Bl(String),
+    /// A call through a register
+    Blx(Expr),
     Cbz(Expr, String),
     Cbnz(Expr, String),
     Push(Vec<Expr>),

@@ -486,6 +486,11 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                     toks.expect(&TokBody::Newline)?;
                     return Ok(Stmt::Insn(Insn::Bx(dst)));
                 }
+                "blx" => {
+                    let dst = parse_expr(toks)?;
+                    toks.expect(&TokBody::Newline)?;
+                    return Ok(Stmt::Insn(Insn::Blx(dst)));
+                }
                 "bcc" | "bcs" | "beq" | "bge" | "bgt" | "bhi" | "bhs" | "ble" | "blo" | "bls"
                 | "blt" | "bmi" | "bne" | "bpl" | "bvc" | "bvs" => {
                     let dst = toks.next().ok_or("expected label")?;

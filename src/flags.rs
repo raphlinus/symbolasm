@@ -56,7 +56,7 @@ fn effect(stmt: &Stmt, if_state: &IfState) -> (u8, u8) {
         Stmt::Insn(Insn::BCond(cond, _)) => (cond_str_reads(cond), 0),
         Stmt::StartIf(cond) => (cond.as_ident().map_or(NZCV, cond_str_reads), 0),
         // The callee may change any flag.
-        Stmt::Insn(Insn::Bl(_)) => (0, NZCV),
+        Stmt::Insn(Insn::Bl(_) | Insn::Blx(_)) => (0, NZCV),
         Stmt::WithFlagsExpr(expr) => (0, expr_writes(expr)),
         Stmt::WithFlagsAssign(_, op, rhs) => {
             let writes = match op.tok {

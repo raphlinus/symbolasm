@@ -967,6 +967,16 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         Err("bx target must be register")?;
                     }
                 }
+                crate::stmt::Insn::Blx(target) => {
+                    if let Some(id) = target.as_ident() {
+                        self.start_insn("blx", if_state)?;
+                        write!(self.w, " ")?;
+                        write_var_reg(id, regmap, self.w)?;
+                        writeln!(self.w)?;
+                    } else {
+                        Err("blx target must be register")?;
+                    }
+                }
                 crate::stmt::Insn::BCond(cond, target) => {
                     let insn = format!("b{cond}");
                     self.start_insn(&insn, if_state)?;
