@@ -1,0 +1,22 @@
+// p.a.b loads and stores a field of an embedded struct, folding the offsets.
+
+struct Vec {
+    ptr: *u32
+    len: u32
+    cap: u32
+}
+
+struct DisplayList {
+    objs: Vec
+    ix: Vec
+}
+
+fn nested(p: *DisplayList) {
+    len @r1 = p.ix.len
+    len += 1
+    p.ix.len = len
+    ptr @r2 = p.objs.ptr
+    cap @r3 = p.ix.cap
+    p.objs.cap = cap
+    bx lr
+}

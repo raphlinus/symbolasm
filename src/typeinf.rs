@@ -148,8 +148,12 @@ impl<'a> TypeInferCtx<'a> {
                     }
                 } else {
                     self.try_get_type(expr).and_then(|base| {
-                        if let Type::Ptr(target) = self.types.get(base)
-                            && let Type::Struct(s) = self.types.get(*target)
+                        // a pointer to a struct, or an embedded struct (p.a.b)
+                        let target = match self.types.get(base) {
+                            Type::Ptr(target) => *target,
+                            _ => base,
+                        };
+                        if let Type::Struct(s) = self.types.get(target)
                             && let Some(field_name) = field.as_ident()
                             && let Some(field) = self.types.get_field(*s, field_name)
                         {

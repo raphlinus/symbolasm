@@ -370,19 +370,29 @@ impl<'a> IrCtx<'a> {
                     return self.lower_peripheral(field);
                 }
                 let expr = self.lower_expr(expr)?;
-                // TODO: support s.a.b, in which case the type is a struct
-                let Type::Ptr(struct_ty) = self.types.get(expr.ty) else {
-                    return Err("base must be pointer")?;
-                };
-                let Type::Struct(struct_handle) = self.types.get(*struct_ty) else {
-                    return Err("base must be pointer to struct")?;
+                // The base is a pointer to a struct, or, for p.a.b, a field
+                // that is itself a struct, whose offset is folded in.
+                let (struct_handle, base, offset) = match self.types.get(expr.ty) {
+                    Type::Struct(s) => {
+                        let Body::Field(base, offset) = expr.body else {
+                            return Err("base must be pointer")?;
+                        };
+                        (*s, base, offset)
+                    }
+                    Type::Ptr(struct_ty) => {
+                        let Type::Struct(s) = self.types.get(*struct_ty) else {
+                            return Err("base must be pointer to struct")?;
+                        };
+                        (*s, Box::new(expr), 0)
+                    }
+                    _ => return Err("base must be pointer")?,
                 };
                 let field = self
                     .types
-                    .get_field(*struct_handle, field.as_ident().unwrap())
+                    .get_field(struct_handle, field.as_ident().unwrap())
                     .ok_or("field not found")?;
                 let ty = field.ty;
-                let body = Body::Field(expr.into(), field.offset);
+                let body = Body::Field(base, offset + field.offset);
                 Ok(Expr { ty, body })
             }
             parse::Expr::Slice(expr, start, end) => {
