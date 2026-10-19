@@ -16,6 +16,8 @@ pub struct Globals {
     pub statics: HashMap<String, TypeHandle>,
     /// The statics declared without `mut`.
     pub immutable: HashSet<String>,
+    /// Functions defined in this file.
+    pub fns: HashSet<String>,
 }
 
 impl Globals {
@@ -27,9 +29,11 @@ impl Globals {
         self.immutable.contains(name)
     }
 
-    /// Whether the name is a symbol or a static.
+    /// Whether the name is a symbol, a static or a function.
     pub fn is_defined(&self, name: &str) -> bool {
-        self.statics.contains_key(name) || self.symbols.contains_key(name)
+        self.statics.contains_key(name)
+            || self.symbols.contains_key(name)
+            || self.fns.contains(name)
     }
 
     pub fn symbol_ty(&self, name: &str) -> Option<TypeHandle> {

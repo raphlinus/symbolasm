@@ -1,0 +1,8 @@
+// error: T isn't the element's type
+struct S {
+    a: u32
+}
+struct T {
+    a: u32
+}
+static s: [S; 1] = [T { a: 1 }]

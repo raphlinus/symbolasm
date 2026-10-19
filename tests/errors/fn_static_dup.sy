@@ -1,0 +1,6 @@
+// error: f is already defined
+static f: u32 = 1
+
+fn f() {
+    bx lr
+}

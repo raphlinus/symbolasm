@@ -1,4 +1,4 @@
-// error: struct initializers
+// error: a struct needs a Name { field: value } initializer
 struct S {
     a: u32
 }

@@ -44,6 +44,8 @@ pub enum Init {
     List(Vec<Init>),
     /// `[x; n]`
     Repeat(Box<Init>, Expr),
+    /// `Name { field: value, ... }`
+    Struct(Token, Vec<(Token, Init)>),
 }
 
 /// A named constant, `const name = expr`, folded to an immediate.
@@ -778,14 +780,26 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
     if !name.is_ident() {
         Err("static name must be identifier")?
     }
-    toks.expect(&TokBody::Colon)?;
-    let ty = parse_type(toks)?;
+    // The type is left out when the initializer is a struct, which names it
+    let ty = if toks.expect_opt(&TokBody::Colon) {
+        Some(parse_type(toks)?)
+    } else {
+        None
+    };
     let init = if toks.expect_opt(&TokBody::Equals) {
         Some(parse_init(toks)?)
     } else if !mutable {
         Err("an immutable static needs an initializer")?
     } else {
         None
+    };
+    let ty = match (ty, &init) {
+        (Some(_), Some(Init::Struct(..))) => {
+            Err("leave out the static's type, the struct initializer names it")?
+        }
+        (Some(ty), _) => ty,
+        (None, Some(Init::Struct(name, _))) => Type::Ident(name.clone()),
+        (None, _) => Err("a static needs a type, unless it's initialized with a struct")?,
     };
     toks.expect(&TokBody::Newline)?;
     Ok(StaticDecl {
@@ -798,9 +812,16 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
     })
 }
 
-/// An initializer: an expression, `[a, b, c]` or `[x; n]`. Inside the
-/// brackets newlines are ignored and a trailing comma is allowed.
+/// An initializer: an expression, `[a, b, c]`, `[x; n]` or
+/// `Name { field: value }`. Lists follow `comma_or_close`.
 fn parse_init(toks: &mut TokBuf) -> Result<Init, Error> {
+    if toks.peek().is_some_and(|t| t.is_ident()) {
+        let name = toks.next().unwrap().clone();
+        if toks.expect_opt(&TokBody::OpenBrace) {
+            return parse_struct_init(name, toks);
+        }
+        toks.back_one();
+    }
     if !toks.expect_opt(&TokBody::OpenBracket) {
         return Ok(Init::Expr(parse_expr(toks)?));
     }
@@ -810,28 +831,61 @@ fn parse_init(toks: &mut TokBuf) -> Result<Init, Error> {
         return Ok(Init::List(items));
     }
     let first = parse_init(toks)?;
-    toks.eat_newlines();
     if toks.expect_opt(&TokBody::Semicolon) {
-        toks.eat_newlines();
         let count = parse_expr(toks)?;
-        toks.eat_newlines();
         toks.expect(&TokBody::CloseBracket)?;
         return Ok(Init::Repeat(first.into(), count));
     }
     items.push(first);
-    loop {
-        if toks.expect_opt(&TokBody::CloseBracket) {
-            break;
-        }
-        toks.expect(&TokBody::Comma)?;
-        toks.eat_newlines();
-        if toks.expect_opt(&TokBody::CloseBracket) {
-            break;
-        }
+    while !comma_or_close(toks, &TokBody::CloseBracket)? {
         items.push(parse_init(toks)?);
-        toks.eat_newlines();
     }
     Ok(Init::List(items))
+}
+
+/// After an element of an initializer list: either the closing bracket or
+/// brace on the same line, or a comma, which a line break may follow. So a
+/// line break needs a comma before it, and the list ends with one when the
+/// close is on its own line, but not when it's on the same line. Returns
+/// whether the list is closed.
+fn comma_or_close(toks: &mut TokBuf, close: &TokBody) -> Result<bool, Error> {
+    if toks.expect_opt(close) {
+        return Ok(true);
+    }
+    if toks.peek().is_some_and(|t| t.tok == TokBody::Newline) {
+        Err("a line break in an initializer needs a comma before it")?
+    }
+    toks.expect(&TokBody::Comma)?;
+    if toks.expect_opt(&TokBody::Newline) {
+        toks.eat_newlines();
+        return Ok(toks.expect_opt(close));
+    }
+    if toks.peek().is_some_and(|t| &t.tok == close) {
+        Err("no trailing comma when the initializer closes on the same line")?
+    }
+    Ok(false)
+}
+
+// Note: the name and open brace have already been consumed. Fields are
+// separated by commas, as in lists.
+fn parse_struct_init(name: Token, toks: &mut TokBuf) -> Result<Init, Error> {
+    let mut fields = vec![];
+    toks.eat_newlines();
+    if toks.expect_opt(&TokBody::CloseBrace) {
+        return Ok(Init::Struct(name, fields));
+    }
+    loop {
+        let field = toks.next().ok_or("expected field name")?.clone();
+        if !field.is_ident() {
+            Err("expected field name")?
+        }
+        toks.expect(&TokBody::Colon)?;
+        fields.push((field, parse_init(toks)?));
+        if comma_or_close(toks, &TokBody::CloseBrace)? {
+            break;
+        }
+    }
+    Ok(Init::Struct(name, fields))
 }
 
 // Note: "const" keyword has already been consumed

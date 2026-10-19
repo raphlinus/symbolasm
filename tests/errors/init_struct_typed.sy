@@ -1,0 +1,5 @@
+// error: leave out the static's type, the struct initializer names it
+struct S {
+    a: u32
+}
+static s: S = S { a: 1 }

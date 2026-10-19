@@ -1,0 +1,49 @@
+// Struct initializers use Rust syntax, and name the static's type. Fields
+// can be written in any order; they're laid out in declaration order, with
+// padding filled in between them and at the end.
+
+struct Vtable {
+    render: *u8
+    start: *u8
+}
+
+struct Obj {
+    vtable: *Vtable
+    x0: u16
+    y0: u16
+    x1: u16
+    y1: u16
+    color: u32
+}
+
+struct Padded {
+    a: u8
+    b: u32
+    c: u16
+}
+
+fn solid_render() {
+    bx lr
+}
+
+static solid_vtable = Vtable { render: solid_render, start: 0 }
+
+static mut objs: [Obj; 2] = [
+    Obj { vtable: &solid_vtable, x0: 0, y0: 0, x1: 640, y1: 320, color: 0x6318 },
+    Obj {
+        vtable: &solid_vtable,
+        color: 0x18,
+        x0: 0,
+        x1: 92,
+        y0: 320,
+        y1: 360,
+    },
+]
+
+static padded: [Padded; 2] = [Padded { c: 3, b: 2, a: 1 }; 2]
+
+static mut one = Padded {
+    a: 4,
+    b: 5,
+    c: 6,
+}

@@ -1,0 +1,5 @@
+// error: no trailing comma when the initializer closes on the same line
+struct S {
+    a: u32
+}
+static s = S { a: 1, }

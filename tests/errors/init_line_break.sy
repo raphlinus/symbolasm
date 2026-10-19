@@ -1,0 +1,4 @@
+// error: a line break in an initializer needs a comma before it
+static a: [u32; 2] = [
+    1, 2
+]

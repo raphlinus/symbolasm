@@ -1,0 +1,5 @@
+// error: S has no field c
+struct S {
+    a: u32
+}
+static s = S { a: 1, c: 2 }

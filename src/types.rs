@@ -246,6 +246,11 @@ impl TypePool {
         layout.iter().find(|f| f.name == field)
     }
 
+    /// A struct's fields, in declaration order.
+    pub fn fields(&self, s: StructHandle) -> &[StructField] {
+        &self.structs[s.0].0
+    }
+
     pub fn intern_tuple(&mut self, els: &[TypeHandle]) -> TypeHandle {
         if let Some(handle) = self.tuple_inv.get(els) {
             self.get_handle(&Type::Tuple(*handle))

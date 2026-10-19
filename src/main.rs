@@ -117,7 +117,13 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
                     globals.immutable.insert(name.to_owned());
                 }
             }
-            parse::Item::Function(_) => (),
+            parse::Item::Function(f) => {
+                let name = f.name.as_ident().unwrap();
+                if globals.is_defined(name) || types.const_value(name).is_some() {
+                    return Err(format!("{name} is already defined").into()).at(&f.name.loc);
+                }
+                globals.fns.insert(name.to_owned());
+            }
         }
     }
     let w = &mut std::io::stdout();

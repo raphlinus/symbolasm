@@ -1,0 +1,15 @@
+// Function addresses in initializers, as for a vtable. The linker sets
+// the Thumb bit.
+
+fn render() {
+    bx lr
+}
+
+static vtable: [u32; 2] = [render, 0]
+
+// A function defined later works too
+static table: [*u8; 3] = [render, start, start + 4]
+
+fn start() {
+    bx lr
+}

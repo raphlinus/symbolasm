@@ -1,0 +1,2 @@
+// error: no trailing comma when the initializer closes on the same line
+static a: [u32; 3] = [1, 2, 3,]
