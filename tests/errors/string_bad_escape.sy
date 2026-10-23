@@ -1,0 +1,2 @@
+// error: unknown escape \q
+static s: [u8; _] = "a\qb"

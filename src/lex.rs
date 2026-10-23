@@ -174,17 +174,21 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                 }
             }
             '"' => {
-                let rest = &src[ix + 1..];
-                let Some(end) = rest
-                    .find(['"', '\n'])
-                    .filter(|&e| rest.as_bytes()[e] == b'"')
-                else {
-                    return Err("unterminated string".into()).at(&loc);
-                };
-                let body = &rest[..end];
-                if body.contains('\\') {
-                    return Err("escapes in strings are not supported".into()).at(&loc);
+                // The body is kept as written, escapes and all; a
+                // backslash only stops the next character ending it.
+                let rest = src[ix + 1..].as_bytes();
+                let mut end = 0;
+                loop {
+                    match rest.get(end) {
+                        Some(b'"') => break,
+                        None | Some(b'\n') => {
+                            return Err("unterminated string".into()).at(&loc);
+                        }
+                        Some(b'\\') if rest.get(end + 1).is_some_and(|&b| b != b'\n') => end += 2,
+                        _ => end += 1,
+                    }
                 }
+                let body = &src[ix + 1..ix + 1 + end];
                 tokens.push(Token::new(loc, TokBody::Str(body.into())));
                 len += end + 1;
             }

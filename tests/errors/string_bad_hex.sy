@@ -1,0 +1,2 @@
+// error: bad escape \xg1, expected two hex digits
+static s: [u8; _] = "\xg1"

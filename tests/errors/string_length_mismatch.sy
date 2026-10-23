@@ -1,0 +1,2 @@
+// error: string has 3 bytes, the array has 4
+static s: [u8; 4] = "abc"

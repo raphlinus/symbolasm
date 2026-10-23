@@ -86,6 +86,19 @@ fn emit_init(
                 }
             }
         }
+        (Type::Array(elem, n), Init::Str(bytes)) => {
+            if *types.get(elem) != Type::U8 {
+                return Err("a string initializer needs a [u8; n]")?;
+            }
+            if bytes.len() != n as usize {
+                return Err(format!(
+                    "string has {} bytes, the array has {n}",
+                    bytes.len()
+                ))?;
+            }
+            writeln!(w, "    .ascii \"{}\"", ascii_escape(bytes))?;
+        }
+        (_, Init::Str(_)) => Err("a string initializer needs a [u8; n]")?,
         (Type::Array(..), Init::Expr(_)) => {
             Err("an array needs a [a, b, c] or [x; n] initializer")?;
         }
@@ -220,4 +233,21 @@ fn address_name(e: &Expr, globals: &Globals) -> Option<String> {
             .map(str::to_owned),
         _ => None,
     }
+}
+
+/// A string's bytes as the body of a GNU as `.ascii` directive: printable
+/// ASCII as is, apart from `"` and `\\`, and anything else in octal.
+fn ascii_escape(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for &b in bytes {
+        match b {
+            b'"' | b'\\' => {
+                out.push('\\');
+                out.push(b as char);
+            }
+            0x20..0x7f => out.push(b as char),
+            _ => out.push_str(&format!("\\{b:03o}")),
+        }
+    }
+    out
 }

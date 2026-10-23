@@ -46,6 +46,8 @@ pub enum Init {
     Repeat(Box<Init>, Expr),
     /// `Name { field: value, ... }`
     Struct(Token, Vec<(Token, Init)>),
+    /// `"text"`, with escapes decoded, for a `[u8; n]`
+    Str(Vec<u8>),
 }
 
 /// A named constant, `const name = expr`, folded to an immediate.
@@ -863,7 +865,7 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
         (Some(_), Some(Init::Struct(..))) => {
             Err("leave out the static's type, the struct initializer names it")?
         }
-        (Some(ty), _) => ty,
+        (Some(ty), init) => infer_count(ty, init)?,
         (None, Some(Init::Struct(name, _))) => Type::Ident(name.clone()),
         (None, _) => Err("a static needs a type, unless it's initialized with a struct")?,
     };
@@ -878,9 +880,72 @@ fn parse_static(toks: &mut TokBuf) -> Result<StaticDecl, Error> {
     })
 }
 
-/// An initializer: an expression, `[a, b, c]`, `[x; n]` or
-/// `Name { field: value }`. Lists follow `comma_or_close`.
+/// `[T; _]` takes its element count from a list or string initializer.
+fn infer_count(ty: Type, init: &Option<Init>) -> Result<Type, Error> {
+    let Type::Array(elem, count) = ty else {
+        return Ok(ty);
+    };
+    let Expr::Ident(underscore) = &*count else {
+        return Ok(Type::Array(elem, count));
+    };
+    if !underscore.match_str("_") {
+        return Ok(Type::Array(elem, count));
+    }
+    let n = match init {
+        Some(Init::List(items)) => items.len(),
+        Some(Init::Str(bytes)) => bytes.len(),
+        _ => Err("[T; _] needs a [a, b, c] or string initializer")?,
+    };
+    let lit = Token {
+        loc: underscore.loc.clone(),
+        tok: TokBody::Number(n as i64),
+    };
+    Ok(Type::Array(elem, Expr::Literal(lit).into()))
+}
+
+/// Decode a string literal's escapes: `\n`, `\t`, `\r`, `\0`, `\\`,
+/// `\"`, `\'` and `\xNN`. Other characters are their UTF-8
+/// bytes.
+fn unescape(body: &str) -> Result<Vec<u8>, Error> {
+    let mut out = vec![];
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        let b = match chars.next() {
+            Some('n') => b'\n',
+            Some('t') => b'\t',
+            Some('r') => b'\r',
+            Some('0') => 0,
+            Some('\\') => b'\\',
+            Some('"') => b'"',
+            Some('\'') => b'\'',
+            Some('x') => {
+                let hex: String = chars.by_ref().take(2).collect();
+                if hex.len() != 2 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    Err(format!("bad escape \\x{hex}, expected two hex digits"))?;
+                }
+                u8::from_str_radix(&hex, 16).unwrap()
+            }
+            Some(c) => Err(format!("unknown escape \\{c}"))?,
+            None => unreachable!("the lexer ends a string only at a quote"),
+        };
+        out.push(b);
+    }
+    Ok(out)
+}
+
+/// An initializer: an expression, `[a, b, c]`, `[x; n]`,
+/// `Name { field: value }` or `"text"`. Lists follow `comma_or_close`.
 fn parse_init(toks: &mut TokBuf) -> Result<Init, Error> {
+    if let Some(TokBody::Str(body)) = toks.peek().map(|t| &t.tok) {
+        let bytes = unescape(body)?;
+        toks.next();
+        return Ok(Init::Str(bytes));
+    }
     if toks.peek().is_some_and(|t| t.is_ident()) {
         let name = toks.next().unwrap().clone();
         if toks.expect_opt(&TokBody::OpenBrace) {

@@ -1,0 +1,2 @@
+// error: a string initializer needs a [u8; n]
+static s: [u32; 3] = "abc"

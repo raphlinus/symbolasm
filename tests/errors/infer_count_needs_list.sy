@@ -1,0 +1,2 @@
+// error: [T; _] needs a [a, b, c] or string initializer
+static s: [u8; _] = [0; 4]

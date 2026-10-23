@@ -1,0 +1,18 @@
+// String initializers for [u8; n] statics, and [T; _] counts.
+
+static avg_str: [u8; 16] = "cycles/line avg "
+static esc_str: [u8; _] = "a\tb\n\"q\" \\ \x00\xff\0"
+static utf8_str: [u8; _] = "µs"
+static mut buf: [u8; _] = "edit me"
+static words: [u32; _] = [1, 2, 3]
+
+const AVG_LEN = count(avg_str)
+
+fn lengths() {
+    n @r0 = count(esc_str)
+    n = AVG_LEN + count(utf8_str)
+    n = size(words)
+    p @r1 = &avg_str
+    b @r2 = *p
+    bx lr
+}
