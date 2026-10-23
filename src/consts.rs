@@ -69,7 +69,7 @@ pub fn eval(
 }
 
 /// `size(x)` is the size in bytes of a static or a named type, and
-/// `count(x)` the number of elements of a static array.
+/// `count(x)` the number of elements of one that is an array.
 fn size_or_count(
     name: &str,
     arg: &Expr,
@@ -81,10 +81,9 @@ fn size_or_count(
     };
     let ty = match statics.get(id) {
         Some(ty) => *ty,
-        None if name == "size" => types
+        None => types
             .named_type(id)
             .ok_or_else(|| format!("{id} is not a static or a type"))?,
-        None => Err(format!("{id} is not a static"))?,
     };
     if name == "count" {
         let &Type::Array(_, n) = types.get(ty) else {
