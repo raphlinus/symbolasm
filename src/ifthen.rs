@@ -56,6 +56,9 @@ pub fn analyze_ift(body: &[Stmt]) -> Vec<IfState> {
                     // This should be caught by validation earlier. Alternatively,
                     // return a result (can also catch invalid condition codes).
                     Stmt::StartIf(_) => panic!("nested ift not allowed"),
+                    // The parser turns this into a label, or rejects it in
+                    // an if #cc block.
+                    Stmt::LoopPart => unreachable!(),
                     Stmt::Assign(_, _, _)
                     | Stmt::WithFlagsExpr(_)
                     | Stmt::WithFlagsAssign(_, _, _)

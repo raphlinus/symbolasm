@@ -1,0 +1,10 @@
+// error: if #cc block can't have a loop part
+fn f(x) {
+    #(x - 1)
+    if #eq {
+        x = 2
+    } loop {
+        x = 3
+    }
+    bx lr
+}

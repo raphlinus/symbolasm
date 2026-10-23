@@ -1,0 +1,6 @@
+// error: goto while outside a while block
+fn f(x) {
+    loop {
+        if x == 0 goto while
+    }
+}

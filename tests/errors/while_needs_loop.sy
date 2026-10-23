@@ -1,0 +1,6 @@
+// error: while block needs a loop part
+fn f(x) {
+    while {
+        if x == 0 goto break
+    }
+}

@@ -1,0 +1,10 @@
+// error: block already has a loop part
+fn f(x) {
+    while {
+        if x == 0 goto break
+    } loop {
+        goto while
+    } loop {
+        goto while
+    }
+}

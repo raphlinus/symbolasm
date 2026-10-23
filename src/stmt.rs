@@ -14,6 +14,8 @@ pub enum Stmt {
     Insn(Insn),
     StartIf(Token),
     Else,
+    /// `} loop {`, between the parts of a `while { } loop { }` block
+    LoopPart,
     EndBlock,
 }
 

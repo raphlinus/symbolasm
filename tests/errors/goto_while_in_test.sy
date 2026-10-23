@@ -1,0 +1,8 @@
+// error: goto while in the while part
+fn f(x) {
+    while {
+        if x == 0 goto while
+    } loop {
+        goto while
+    }
+}

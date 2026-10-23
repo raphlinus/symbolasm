@@ -290,14 +290,25 @@ fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
 enum OpenBlock {
     /// `if #cc { }`, compiled to an IT block
     It,
-    /// `if { }`, which scopes the labels `else` and `end`, or `loop { }`,
-    /// which scopes `loop` and `break`
+    /// A block that scopes labels; see [`LabelBlock`]
     Labels {
         id: usize,
-        is_loop: bool,
+        kind: LabelBlock,
         has_else: bool,
         uses_else: bool,
     },
+}
+
+/// The kinds of label block.
+#[derive(Clone, Copy, PartialEq)]
+enum LabelBlock {
+    /// `if { }`, which scopes `else` and `end`
+    If,
+    /// `loop { }`, which scopes `loop` and `break`
+    Loop,
+    /// `while { a } loop { b }`, which scopes `loop` and `break`, and in
+    /// the loop part also `while`. `in_loop` is set once `} loop {` is seen.
+    While { in_loop: bool },
 }
 
 fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>), Error> {
@@ -315,14 +326,22 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
         }
         let tok = toks.peek().ok_or("unexpected eof in function body")?;
         let loc = tok.loc.clone();
-        // `if {` and `loop {` open a label block
-        let opens_label_block = (tok.match_str("if") || tok.match_str("loop"))
-            && toks.tokens.get(toks.ix + 1).map(|t| &t.tok) == Some(&TokBody::OpenBrace);
-        if opens_label_block {
+        // `if {`, `loop {` and `while {` open a label block
+        let kind = if tok.match_str("if") {
+            Some(LabelBlock::If)
+        } else if tok.match_str("loop") {
+            Some(LabelBlock::Loop)
+        } else if tok.match_str("while") {
+            Some(LabelBlock::While { in_loop: false })
+        } else {
+            None
+        };
+        if let Some(kind) = kind
+            && toks.tokens.get(toks.ix + 1).map(|t| &t.tok) == Some(&TokBody::OpenBrace)
+        {
             if let Some(OpenBlock::It) = blocks.last() {
                 return Err("blocks are not allowed inside if #cc { }".into()).at(&loc);
             }
-            let is_loop = tok.match_str("loop");
             toks.next();
             toks.next();
             toks.expect(&TokBody::Newline)?;
@@ -330,12 +349,17 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
             n_label_blocks += 1;
             blocks.push(OpenBlock::Labels {
                 id,
-                is_loop,
+                kind,
                 has_else: false,
                 uses_else: false,
             });
-            if is_loop {
-                stmts.push(Stmt::Label(block_label(id, "loop")));
+            let start = match kind {
+                LabelBlock::If => None,
+                LabelBlock::Loop => Some("loop"),
+                LabelBlock::While { .. } => Some("while"),
+            };
+            if let Some(start) = start {
+                stmts.push(Stmt::Label(block_label(id, start)));
                 locs.push(loc);
             }
             continue;
@@ -343,8 +367,11 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
         let mut stmt = parse_stmt(toks).at(&loc)?;
         match (&stmt, blocks.last_mut()) {
             (Stmt::StartIf(_), _) => blocks.push(OpenBlock::It),
-            (Stmt::Else | Stmt::EndBlock, None) => {
+            (Stmt::Else | Stmt::LoopPart | Stmt::EndBlock, None) => {
                 return Err("unmatched close brace".into()).at(&loc);
+            }
+            (Stmt::LoopPart, Some(OpenBlock::It)) => {
+                return Err("if #cc block can't have a loop part".into()).at(&loc);
             }
             (Stmt::Else | Stmt::EndBlock, Some(OpenBlock::It)) => {
                 if let Stmt::EndBlock = stmt {
@@ -354,14 +381,17 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
             (
                 Stmt::Else,
                 Some(OpenBlock::Labels {
-                    id,
-                    is_loop,
-                    has_else,
-                    ..
+                    id, kind, has_else, ..
                 }),
             ) => {
-                if *is_loop {
-                    return Err("loop block can't have an else".into()).at(&loc);
+                match kind {
+                    LabelBlock::If => (),
+                    LabelBlock::Loop => {
+                        return Err("loop block can't have an else".into()).at(&loc);
+                    }
+                    LabelBlock::While { .. } => {
+                        return Err("while block can't have an else".into()).at(&loc);
+                    }
                 }
                 if *has_else {
                     return Err("block already has an else".into()).at(&loc);
@@ -377,10 +407,22 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
                 *has_else = true;
                 stmt = Stmt::Label(block_label(*id, "else"));
             }
+            (Stmt::LoopPart, Some(OpenBlock::Labels { id, kind, .. })) => {
+                let LabelBlock::While { in_loop } = kind else {
+                    return Err("only a while block has a loop part".into()).at(&loc);
+                };
+                if *in_loop {
+                    return Err("block already has a loop part".into()).at(&loc);
+                }
+                // The while part falls through into the loop part, which is
+                // the usual way to enter it.
+                *in_loop = true;
+                stmt = Stmt::Label(block_label(*id, "loop"));
+            }
             (Stmt::EndBlock, Some(OpenBlock::Labels { id, .. })) => {
                 let id = *id;
                 let Some(OpenBlock::Labels {
-                    is_loop,
+                    kind,
                     has_else,
                     uses_else,
                     ..
@@ -391,35 +433,57 @@ fn parse_body(toks: &mut TokBuf, fn_name: &str) -> Result<(Vec<Stmt>, Vec<Loc>),
                 if uses_else && !has_else {
                     return Err("goto else in a block with no else".into()).at(&loc);
                 }
-                stmt = Stmt::Label(block_label(id, if is_loop { "break" } else { "end" }));
+                if kind == (LabelBlock::While { in_loop: false }) {
+                    return Err("while block needs a loop part, `} loop {`".into()).at(&loc);
+                }
+                let label = if kind == LabelBlock::If {
+                    "end"
+                } else {
+                    "break"
+                };
+                stmt = Stmt::Label(block_label(id, label));
             }
             (Stmt::Insn(_), _) => {
-                // `loop` and `break` refer to the innermost `loop { }`, `else`
-                // and `end` to the innermost `if { }`. Outside any label
-                // block they are ordinary named labels.
+                // `loop` and `break` refer to the innermost `loop { }` or
+                // `while { }`, `while` to the innermost `while { }`, and
+                // `else` and `end` to the innermost `if { }`. Outside any
+                // label block they are ordinary named labels.
                 if let Some(label) = branch_target_mut(&mut stmt)
-                    && matches!(label.as_str(), "loop" | "break" | "else" | "end")
+                    && matches!(label.as_str(), "loop" | "break" | "while" | "else" | "end")
                     && blocks.iter().any(|b| matches!(b, OpenBlock::Labels { .. }))
                 {
-                    let want_loop = matches!(label.as_str(), "loop" | "break");
                     let target = blocks.iter_mut().rev().find_map(|b| match b {
                         OpenBlock::Labels {
                             id,
-                            is_loop,
+                            kind,
                             uses_else,
                             ..
-                        } if *is_loop == want_loop => Some((*id, uses_else)),
+                        } => {
+                            let matches = match label.as_str() {
+                                "loop" | "break" => *kind != LabelBlock::If,
+                                "while" => matches!(kind, LabelBlock::While { .. }),
+                                _ => *kind == LabelBlock::If,
+                            };
+                            matches.then_some((*id, *kind, uses_else))
+                        }
                         _ => None,
                     });
-                    let Some((id, uses_else)) = target else {
+                    let Some((id, kind, uses_else)) = target else {
                         let msg = match label.as_str() {
                             "end" => "goto end outside an if block; use goto break to leave a loop"
                                 .to_string(),
                             "else" => "goto else outside an if block".to_string(),
+                            "while" => "goto while outside a while block".to_string(),
                             _ => format!("goto {label} outside a loop block"),
                         };
                         return Err(msg.into()).at(&loc);
                     };
+                    // Re-testing from inside the test would usually be an
+                    // infinite loop.
+                    if label == "while" && kind == (LabelBlock::While { in_loop: false }) {
+                        return Err("goto while in the while part; use it in the loop part".into())
+                            .at(&loc);
+                    }
                     if label == "else" {
                         *uses_else = true;
                     }
@@ -609,12 +673,14 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
             match &tok.tok {
                 TokBody::Newline => Ok(Stmt::EndBlock),
                 TokBody::Identifier(id) => {
-                    if id != "else" {
-                        Err("unexpected identifier after close brace")?
-                    }
+                    let stmt = match id.as_str() {
+                        "else" => Stmt::Else,
+                        "loop" => Stmt::LoopPart,
+                        _ => Err("unexpected identifier after close brace")?,
+                    };
                     toks.expect(&TokBody::OpenBrace)?;
                     toks.expect(&TokBody::Newline)?;
-                    Ok(Stmt::Else)
+                    Ok(stmt)
                 }
                 _ => Err("unexpected token after close brace")?,
             }

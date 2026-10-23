@@ -1,0 +1,8 @@
+// error: while block can't have an else
+fn f(x) {
+    while {
+        if x == 0 goto break
+    } else {
+        goto while
+    }
+}

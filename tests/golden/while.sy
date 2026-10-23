@@ -1,0 +1,51 @@
+// while { } loop { } blocks: a test, then a body that ends in its own test.
+
+fn sum(p: *u32, n) {
+    s @r2 = 0
+    while {
+        if n == 0 goto break
+    } loop {
+        v @r3 = *p++
+        s += v
+        #(n -= 1)
+        if #ne goto loop
+    }
+    r0 = s
+    bx lr
+}
+
+// The loop part may also branch back to the test.
+fn skip_zeros(p: *u32, end: *u32) {
+    while {
+        #(p - end)
+        if #eq goto break
+    } loop {
+        v @r2 = *p++
+        #(v - 1)
+        if #lo goto while
+        *p = v
+        goto while
+    }
+    bx lr
+}
+
+// break and loop resolve through nested if blocks, and an inner loop
+// shadows them.
+fn nested(p: *u32, n) {
+    while {
+        if n == 0 goto break
+    } loop {
+        v @r2 = *p++
+        if {
+            if v == 0 goto end
+            loop {
+                #(v -= 1)
+                if #ne goto loop
+            }
+            goto while
+        }
+        #(n -= 1)
+        if #ne goto loop
+    }
+    bx lr
+}

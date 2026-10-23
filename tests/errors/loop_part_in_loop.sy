@@ -1,0 +1,8 @@
+// error: only a while block has a loop part
+fn f(x) {
+    loop {
+        if x == 0 goto break
+    } loop {
+        goto loop
+    }
+}
