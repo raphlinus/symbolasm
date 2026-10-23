@@ -568,6 +568,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     write_reg(*r, self.w)?;
                     writeln!(self.w, ", #:{}:{sym}", half_reloc(*half))?;
                 }
+                // Clearing the top 24 or 16 bits is a zero extend, which has
+                // a 16 bit encoding for low registers.
+                Body::Imm(_) if end == 32 && (start == 8 || start == 16) && *r < 8 => {
+                    let insn = if start == 8 { "uxtb" } else { "uxth" };
+                    self.start_insn(insn, if_state)?;
+                    write!(self.w, " ")?;
+                    write_reg(*r, self.w)?;
+                    write!(self.w, ", ")?;
+                    write_reg(*r, self.w)?;
+                    writeln!(self.w)?;
+                }
                 Body::Imm(_) => {
                     self.start_insn("bfc", if_state)?;
                     write!(self.w, " ")?;
