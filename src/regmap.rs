@@ -40,6 +40,12 @@ pub fn parse_register(s: &str) -> Option<u8> {
 
 impl Regmap {
     fn place(&mut self, var: &str, reg: u8) {
+        // Moving var kills its old register
+        if let Some(&Some(old_reg)) = self.var_places.get(var)
+            && old_reg != reg
+        {
+            self.kill(old_reg);
+        }
         self.killed_regs.insert(reg as usize);
         if let Some(old_var) = self.reg_contents.insert(reg, var.to_owned()) {
             self.var_places.insert(old_var, None);

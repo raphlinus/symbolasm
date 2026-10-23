@@ -1,0 +1,29 @@
+// Moving a variable to another register under the same name: its old
+// register no longer holds it, so killing that register (by a call, or by
+// placing something else there) leaves the variable in its new one.
+
+fn read_after_call(e: *u8) {
+    push(r4, lr)
+    e @r4 = e
+    bl other
+    v @r0 = *((e as *u8) + 1)
+    pop(r4, pc)
+}
+
+fn write_after_call(p: *u8) {
+    push(r4, lr)
+    p @r4 = p
+    bl other
+    p += 1
+    v @r0 = *((p as *u8) + 0)
+    pop(r4, pc)
+}
+
+fn old_reg_reused(e: *u8) {
+    push(r4, lr)
+    e @r4 = e
+    x @r0 = 5
+    bl other
+    v @r0 = *((e as *u8) + 1)
+    pop(r4, pc)
+}
