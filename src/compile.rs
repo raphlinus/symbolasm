@@ -258,10 +258,11 @@ impl FnScope {
                 let if_state = &if_analysis[ix];
                 // For --analyze, which maps asm lines back to statements.
                 // `a` marks a statement that lowers to IR, so one that
-                // emits nothing was elided.
+                // emits nothing was elided. Last, the flags live after it.
                 if markers {
                     let kind = if IrCtx::can_lower(stmt) { "a" } else { "o" };
-                    writeln!(w, "@sy {} {kind}", func.locs[ix].offset)?;
+                    let live = live_flags[ix];
+                    writeln!(w, "@sy {} {kind} {live}", func.locs[ix].offset)?;
                 }
                 let result = if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, globals);

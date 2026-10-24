@@ -3,8 +3,8 @@
 
 //! Per-line size and cycle analysis, for `--analyze`.
 //!
-//! The asm, with a `@sy <offset> <kind>` marker before each statement's
-//! instructions, goes through the GNU assembler for a listing, which gives
+//! The asm, with a `@sy <offset> <kind> <live flags>` marker before each
+//! statement's instructions, goes through the GNU assembler for a listing, which gives
 //! each instruction's address and encoding. A rough Cortex-M33 timing model
 //! (RP2350 datasheet 3.7.4.9) then runs over each function's instructions in
 //! address order, as if it were straight-line code: the instruction before a
@@ -18,7 +18,7 @@ use std::{
     process::Command,
 };
 
-use crate::error::Error;
+use crate::{error::Error, flags};
 
 #[derive(Clone, Copy, PartialEq)]
 enum SizeMode {
@@ -129,6 +129,8 @@ struct Insn {
     ops: Vec<Op>,
     /// Writeback, with `!` or a post-indexed offset.
     wb: bool,
+    /// The flags live after its statement
+    live_flags: u8,
     cyc: String,
     cyc_why: String,
     size_why: Option<char>,
@@ -179,6 +181,8 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
     // code before it
     let mut fn_aligned = vec![false; fns.len()];
     let mut balign = false;
+    // The flags live after the current statement
+    let mut live_flags = flags::NZCV;
     for (ix, line) in lines.iter().enumerate() {
         if line.starts_with(".section") {
             // Labels at the very end of a section don't name an instruction.
@@ -191,6 +195,10 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
             let mut parts = rest.split_whitespace();
             let offset = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
             let assign = parts.next() == Some("a");
+            live_flags = parts
+                .next()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(flags::NZCV);
             if let Some(func) = cur_fn {
                 markers.push(Marker {
                     func,
@@ -244,6 +252,7 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
                 cond,
                 ops,
                 wb,
+                live_flags,
                 cyc: String::new(),
                 cyc_why: String::new(),
                 size_why: None,
@@ -1374,8 +1383,20 @@ fn size_why(insn: &Insn) -> Option<char> {
     let base = insn.base.as_str();
     let ops = &insn.ops;
     let in_it = insn.cond.is_some() && base != "b";
-    // 16 bit data processing sets flags outside an IT block, and not inside
-    let flags_wrong = insn.s == in_it;
+    // 16 bit data processing sets flags outside an IT block, and not inside.
+    // Outside, that's only in the way when they're live after the statement:
+    // otherwise the compiler would take the 16 bit form if the registers
+    // allowed it.
+    let writes16 = match base {
+        "add" | "sub" | "adc" | "sbc" | "rsb" => flags::NZCV,
+        "lsl" | "lsr" | "asr" | "ror" => flags::NZC,
+        _ => flags::NZ,
+    };
+    let flags_wrong = if in_it {
+        insn.s
+    } else {
+        !insn.s && writes16 & insn.live_flags != 0
+    };
     let lo = |r: &u8| *r < 8;
     let regs: Vec<u8> = ops
         .iter()
