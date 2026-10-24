@@ -1,7 +1,10 @@
 // Copyright 2026 Raph Levien
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::{collections::HashMap, io::Write};
+use std::{
+    collections::{HashMap, VecDeque},
+    io::Write,
+};
 
 use crate::{
     error::{Error, WithLoc},
@@ -12,9 +15,9 @@ use crate::{
     ifthen,
     ir::IrCtx,
     parse::Function,
-    regmap::Regmap,
+    regmap::{FnCtx, Regmap},
     stmt::{Insn, Stmt},
-    typeinf::TypeInferCtx,
+    typeinf::TypeMap,
     types::TypePool,
 };
 
@@ -23,8 +26,8 @@ pub struct FnScope {
     // map from label name to stmt number
     labels: HashMap<String, usize>,
     basic_blocks: Vec<BasicBlock>,
-    /// Placements at the end of each basic block, parallel to basic_blocks
-    regmaps: Vec<Regmap>,
+    /// Placements at the start of each basic block, parallel to basic_blocks
+    ins: Vec<Regmap>,
     basic_block_starts: HashMap<usize, usize>,
 }
 
@@ -46,7 +49,7 @@ pub struct BasicBlock {
 }
 
 impl FnScope {
-    pub fn analyze(&mut self, func: &Function) -> Result<(), Error> {
+    pub fn analyze(&mut self, func: &Function, ctx: &FnCtx) -> Result<(), Error> {
         for (ix, stmt) in func.body.iter().enumerate() {
             if let Stmt::Label(l) = stmt {
                 if self.labels.insert(l.clone(), ix).is_some() {
@@ -59,8 +62,6 @@ impl FnScope {
         // Find all the basic blocks
         // Basic block 0 is function start
         self.start_basic_block(0);
-        self.regmaps[0].init_from_args(&func.args);
-
         self.start_basic_block(0);
         self.add_edge(0, 1);
 
@@ -105,42 +106,64 @@ impl FnScope {
             }
         }
 
-        // build register maps
-        for (block, regmap) in self.basic_blocks[1..].iter().zip(&mut self.regmaps[1..]) {
-            for ix in block.start..block.end {
-                let stmt = &func.body[ix];
-                regmap.apply(stmt);
-            }
-        }
-
-        self.propagate_regmaps();
-
-        //println!("{:#?}", self.basic_blocks);
-        Ok(())
+        self.dataflow(func, ctx)
     }
 
-    fn propagate_regmaps(&mut self) {
-        // Every block needs at least one visit; a block whose first
-        // intersection changes nothing would otherwise never pass its
-        // placements on to its successors.
-        let mut queue: Vec<usize> = (0..self.basic_blocks.len()).rev().collect();
-        while let Some(node) = queue.pop() {
-            let n_succ = self.basic_blocks[node].succ.len();
-            for i in 0..n_succ {
-                let succ = self.basic_blocks[node].succ[i];
-                if node != succ {
-                    let (lo, hi) = self.regmaps.split_at_mut(node.max(succ));
-                    let (n, s) = if node < succ {
-                        (&lo[node], &mut hi[0])
-                    } else {
-                        (&hi[0], &mut lo[succ])
-                    };
-                    if s.intersect_pred(n) {
-                        queue.push(succ);
+    /// Find the placements at the start of each block. A block's start is
+    /// what its predecessors agree on at their ends. Predecessors not yet
+    /// reached are left out, so loops start from what's known on the way in.
+    fn dataflow(&mut self, func: &Function, ctx: &FnCtx) -> Result<(), Error> {
+        let n = self.basic_blocks.len();
+        let mut outs: Vec<Option<Regmap>> = vec![None; n];
+        outs[0] = Some(Regmap::entry(&func.args, ctx.abi));
+        self.ins = vec![Regmap::default(); n];
+        let mut queue = VecDeque::from([1]);
+        let mut queued = vec![false; n];
+        queued[1] = true;
+        let mut steps = 0;
+        while let Some(b) = queue.pop_front() {
+            queued[b] = false;
+            steps += 1;
+            let loc = &func.locs[self.basic_blocks[b].start.min(func.locs.len() - 1)];
+            if steps > 100 * n + 1000 {
+                return Err("placement analysis didn't converge".into()).at(loc);
+            }
+            let mut state: Option<Regmap> = None;
+            for &p in &self.basic_blocks[b].pred {
+                let Some(out) = &outs[p] else { continue };
+                match &mut state {
+                    None => state = Some(out.clone()),
+                    Some(state) => {
+                        if let Err((a, c)) = state.meet(out) {
+                            return Err(format!(
+                                "sp is {} on one path into here and {} on another",
+                                sp_offset(a),
+                                sp_offset(c)
+                            )
+                            .into())
+                            .at(loc);
+                        }
+                    }
+                }
+            }
+            let Some(state) = state else { continue };
+            let mut out = state.clone();
+            let block = &self.basic_blocks[b];
+            for ix in block.start..block.end {
+                out.apply(&func.body[ix], ctx);
+            }
+            self.ins[b] = state;
+            if outs[b].as_ref().is_none_or(|o| !o.same(&out)) {
+                outs[b] = Some(out);
+                for &succ in &self.basic_blocks[b].succ {
+                    if !queued[succ] {
+                        queued[succ] = true;
+                        queue.push_back(succ);
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn check_cbz_target(&self, ix: usize, label: &str) -> Result<(), Error> {
@@ -178,7 +201,6 @@ impl FnScope {
     fn start_basic_block(&mut self, start: usize) {
         self.basic_block_starts
             .insert(start, self.basic_blocks.len());
-        self.regmaps.push(Regmap::default());
         self.basic_blocks.push(BasicBlock {
             start,
             end: 0,
@@ -197,6 +219,7 @@ impl FnScope {
         func: &Function,
         types: &mut TypePool,
         globals: &Globals,
+        typemap: &TypeMap,
         mut facts: Option<&mut Vec<StmtPlaces>>,
         w: &mut impl Write,
     ) -> Result<(), Error> {
@@ -228,8 +251,6 @@ impl FnScope {
             fn_name: func.name.as_ident().unwrap_or_default(),
             labels: &self.labels,
         };
-        let type_inf_ctx = TypeInferCtx::new(types, globals);
-        let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
         let live_flags = flags::live_after(&func.body, &if_analysis, &self.basic_blocks);
         let places = |regmap: &Regmap, types: &TypePool| -> Vec<Place> {
@@ -243,16 +264,8 @@ impl FnScope {
                 .collect()
         };
         //println!("{if_analysis:?}");
-        for block in &self.basic_blocks[1..] {
-            let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
-                let mut regmap = self.regmaps[*pred].clone();
-                for ix in tail {
-                    regmap.intersect(&self.regmaps[*ix]);
-                }
-                regmap
-            } else {
-                Regmap::default()
-            };
+        for (block, regmap) in self.basic_blocks[1..].iter().zip(&self.ins[1..]) {
+            let mut regmap = regmap.clone();
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
                 let if_state = &if_analysis[ix];
@@ -265,7 +278,7 @@ impl FnScope {
                     writeln!(w, "@sy {} {kind} {live}", func.locs[ix].offset)?;
                 }
                 let result = if IrCtx::can_lower(stmt) {
-                    let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, globals);
+                    let mut ir_ctx = IrCtx::new(&regmap, types, typemap, globals);
                     ir_ctx.lower(stmt).and_then(|ir| {
                         let mut gen_ctx = GenCtx::new(types, w);
                         gen_ctx.set_live_flags(live_flags[ix]);
@@ -277,7 +290,13 @@ impl FnScope {
                 };
                 result.at(&func.locs[ix])?;
                 let before = facts.as_ref().map(|_| places(&regmap, types));
-                regmap.apply(stmt);
+                let ctx = FnCtx {
+                    abi: func.abi,
+                    types,
+                    globals,
+                    typemap,
+                };
+                regmap.apply(stmt, &ctx);
                 if let (Some(sink), Some(before)) = (facts.as_deref_mut(), before) {
                     sink.push(StmtPlaces {
                         offset: func.locs[ix].offset,
@@ -292,6 +311,15 @@ impl FnScope {
             writeln!(w, ".size {name}, . - {name}")?;
         }
         Ok(())
+    }
+}
+
+/// An sp offset from its value at entry, for messages
+fn sp_offset(n: i32) -> String {
+    match n {
+        0 => "where it was at entry".into(),
+        n if n < 0 => format!("{} below where it was at entry", -n),
+        n => format!("{n} above where it was at entry"),
     }
 }
 

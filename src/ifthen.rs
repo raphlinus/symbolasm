@@ -63,7 +63,9 @@ pub fn analyze_ift(body: &[Stmt]) -> Vec<IfState> {
                     | Stmt::WithFlagsExpr(_)
                     | Stmt::WithFlagsAssign(_, _, _)
                     | Stmt::WithAddrUpdate(_, _, _, _)
-                    | Stmt::Insn(_) => {
+                    | Stmt::Insn(_)
+                    | Stmt::Call(_)
+                    | Stmt::SpAdjust(..) => {
                         result[j] = if is_then {
                             IfState::Then(cond)
                         } else {

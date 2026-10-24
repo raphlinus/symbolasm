@@ -1,0 +1,11 @@
+// error: x is no longer in a register: it isn't placed on another path into here
+fn f(c) {
+    if c == 0 goto b
+    x @r1 = 1
+    goto j
+b:
+    y @r1 = 2
+j:
+    r0 = x
+    bx lr
+}

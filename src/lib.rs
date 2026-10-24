@@ -12,6 +12,7 @@ use crate::{
     globals::Globals,
     lex::tokenize,
     parse::parse_program,
+    typeinf::TypeInferCtx,
     types::TypePool,
 };
 
@@ -213,15 +214,24 @@ pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output
     let mut places = vec![];
     for item in &program.0 {
         if let parse::Item::Function(func) = item {
+            let typemap = TypeInferCtx::new(&mut types, &globals)
+                .infer(func)
+                .at(&func.name.loc)?;
+            let ctx = regmap::FnCtx {
+                abi: func.abi,
+                types: &types,
+                globals: &globals,
+                typemap: &typemap,
+            };
             let mut scope = FnScope::default();
-            scope.analyze(func)?;
+            scope.analyze(func, &ctx)?;
             let sink = if facts {
                 scope.label_defs(func, src, &mut defs);
                 Some(&mut places)
             } else {
                 None
             };
-            scope.gen_function(func, &mut types, &globals, sink, w)?;
+            scope.gen_function(func, &mut types, &globals, &typemap, sink, w)?;
         }
     }
 
