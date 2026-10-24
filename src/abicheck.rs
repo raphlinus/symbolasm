@@ -313,9 +313,9 @@ pub fn check_stmt(stmt: &Stmt, regmap: &Regmap, ctx: &FnCtx) -> Result<(), Error
             }
             Ok(())
         }
-        Stmt::WithAddrUpdate(_, lhs, _, _) if is_sp(lhs) => {
-            if ctx.abi != Abi::Wild {
-                Err("sp can't be updated by a load or store yet, outside a wild function")?;
+        Stmt::WithAddrUpdate(_, lhs, _, incr) if is_sp(lhs) => {
+            if ctx.abi != Abi::Wild && !matches!(incr, Expr::Literal(_)) {
+                Err("sp can only change by a constant outside a wild function")?;
             }
             Ok(())
         }

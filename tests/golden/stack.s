@@ -38,3 +38,22 @@ sixth:
     adds r0, r0, r1
     bx lr
 .size sixth, . - sixth
+.section .text
+.global writeback
+.type writeback, %function
+.thumb_func
+writeback:
+    push {r4, r5, r6, lr}
+    ldr r0, [sp], #4
+    ldm sp!, {r1, r2}
+    pop {pc}
+.size writeback, . - writeback
+.section .text
+.global writeback_by
+.type writeback_by, %function
+.thumb_func
+writeback_by:
+    push {r4, r5, lr}
+    ldr r0, [sp], #8
+    pop {pc}
+.size writeback_by, . - writeback_by

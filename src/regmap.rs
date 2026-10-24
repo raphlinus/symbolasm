@@ -193,6 +193,62 @@ pub fn is_sp(expr: &Expr) -> bool {
     expr.as_ident() == Some("sp")
 }
 
+/// A load or store through sp that updates it, `x = *sp++` or
+/// `x = *sp; sp += 4`: how far it moves sp, and for a store, how many bytes
+/// it writes
+fn sp_writeback(stmt: &Stmt, ctx: &FnCtx) -> Option<(i32, Option<i32>)> {
+    // The bytes the values transferred take
+    let size = |expr: &Expr| -> i32 {
+        let one = |e: &Expr| match ret_var(e) {
+            Some(var) if parse_register(var).is_none() => ctx.layout(var).0.max(4),
+            _ => 4,
+        };
+        match expr {
+            Expr::Tuple(els) => els.iter().map(one).sum(),
+            _ => one(expr),
+        }
+    };
+    // `*sp++`
+    let post_inc = |expr: &Expr| -> Option<i32> {
+        if let Expr::Unary(op, inner) = expr
+            && op.tok == TokBody::Asterisk
+            && let Expr::PostInc(addr, sign) = &**inner
+            && is_sp(addr)
+        {
+            Some(*sign)
+        } else {
+            None
+        }
+    };
+    let deref_sp = |expr: &Expr| matches!(expr, Expr::Unary(op, inner) if op.tok == TokBody::Asterisk && is_sp(inner));
+    match stmt {
+        Stmt::Assign(lhs, op, rhs) | Stmt::WithFlagsAssign(lhs, op, rhs)
+            if op.tok == TokBody::Equals =>
+        {
+            if let Some(sign) = post_inc(rhs) {
+                Some((sign * size(lhs), None))
+            } else if let Some(sign) = post_inc(lhs) {
+                let n = size(rhs);
+                Some((sign * n, Some(n)))
+            } else {
+                None
+            }
+        }
+        Stmt::WithAddrUpdate(inner, _, sign, Expr::Literal(lit)) => {
+            let TokBody::Number(n) = lit.tok else {
+                return None;
+            };
+            let delta = sign * n as i32;
+            match &**inner {
+                Stmt::Assign(_, _, rhs) if deref_sp(rhs) => Some((delta, None)),
+                Stmt::Assign(lhs, _, rhs) if deref_sp(lhs) => Some((delta, Some(size(rhs)))),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The variable a call result names, `x` or `x @r0`
 pub fn ret_var(ret: &Expr) -> Option<&str> {
     match ret {
@@ -322,6 +378,33 @@ impl Regmap {
         }
     }
 
+    /// A load or store that moves sp by `delta`, at the old sp. A store
+    /// leaves the slots it writes unnamed.
+    fn move_sp(&mut self, delta: i32, store: Option<i32>) {
+        let Some(sp) = self.sp else {
+            return;
+        };
+        if let Some(size) = store {
+            let written: Vec<i32> = self
+                .slots
+                .range(..sp + size)
+                .filter(|(p, s)| **p + s.size > sp)
+                .map(|(p, _)| *p)
+                .collect();
+            for p in written {
+                let slot = self.slots.remove(&p).unwrap();
+                self.stack_places.remove(&slot.var);
+                self.stack_lost
+                    .insert(slot.var, "a store through sp wrote its slot".into());
+            }
+        }
+        if delta > 0 {
+            self.set_sp(sp + delta, "it was popped");
+        } else {
+            self.sp = Some(sp + delta);
+        }
+    }
+
     /// Lose track of sp, and with it the stack
     pub fn lose_sp(&mut self, why: &str) {
         self.sp = None;
@@ -336,14 +419,19 @@ impl Regmap {
             Stmt::Assign(lhs, _op, _rhs) | Stmt::WithFlagsAssign(lhs, _op, _rhs) => {
                 if is_sp(lhs) {
                     self.lose_sp("sp was assigned");
+                } else if let Some((delta, store)) = sp_writeback(stmt, ctx) {
+                    self.move_sp(delta, store);
                 }
                 self.apply_assign(lhs)
             }
-            Stmt::WithAddrUpdate(stmt, lhs, _sign, _incr) => {
+            Stmt::WithAddrUpdate(inner, lhs, _sign, _incr) => {
                 if is_sp(lhs) {
-                    self.lose_sp("sp was updated");
+                    match sp_writeback(stmt, ctx) {
+                        Some((delta, store)) => self.move_sp(delta, store),
+                        None => self.lose_sp("sp was updated"),
+                    }
                 }
-                self.apply(stmt, ctx)
+                self.apply(inner, ctx)
             }
             Stmt::Insn(Insn::Push(regs)) => self.apply_push(regs),
             Stmt::Insn(Insn::Pop(regs)) => self.apply_pop(regs),

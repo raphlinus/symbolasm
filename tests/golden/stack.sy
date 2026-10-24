@@ -39,3 +39,17 @@ fn sixth(a, b, c, d, e, f) -> s {
     s = t + u
     bx lr
 }
+
+// Loads that move sp are followed like pops
+fn[abi = loose] writeback() {
+    push(r4, r5, r6, lr)
+    x @r0 = *sp++
+    (a @r1, b @r2) = *sp++
+    pop(pc)
+}
+
+fn[abi = loose] writeback_by(n) {
+    push(r4, r5, lr)
+    x @r0 = *sp; sp += 8
+    pop(pc)
+}

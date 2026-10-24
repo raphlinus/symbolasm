@@ -1,0 +1,7 @@
+// error: popping pc returns, but its slot holds something unnamed
+fn[abi = loose] f() {
+    push(r4, lr)
+    x @r0 = *sp++
+    y @r1 = *sp++
+    pop(pc)
+}
