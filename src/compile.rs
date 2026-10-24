@@ -14,7 +14,7 @@ use crate::{
     flags,
     generate::{GenCtx, LocalLabels},
     globals::Globals,
-    ifthen,
+    ifthen::{self, IfState},
     ir::IrCtx,
     parse::Function,
     regmap::{FnCtx, Regmap},
@@ -289,6 +289,10 @@ impl FnScope {
                     let live = live_flags[ix];
                     writeln!(w, "@sy {} {kind} {live}", func.locs[ix].offset)?;
                 }
+                if !matches!(if_state, IfState::Default) && moves_sp(stmt) {
+                    return Err("push, pop, calls and changes to sp can't be in if #cc { }".into())
+                        .at(&func.locs[ix]);
+                }
                 let ctx = FnCtx::new(func, types, globals, typemap);
                 let target = match stmt {
                     Stmt::Call(call) => abicheck::check_call(call, &regmap, &ctx).map(Some),
@@ -342,6 +346,24 @@ impl FnScope {
             writeln!(w, ".size {name}, . - {name}")?;
         }
         Ok(())
+    }
+}
+
+/// Whether a statement changes sp or calls, which the analysis can't follow
+/// when conditional
+fn moves_sp(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Insn(Insn::Push(_) | Insn::Pop(_) | Insn::Bl(_) | Insn::Blx(_)) => true,
+        Stmt::Call(_) | Stmt::SpAdjust(..) => true,
+        Stmt::WithAddrUpdate(_, lhs, _, _) => crate::regmap::is_sp(lhs),
+        Stmt::Assign(lhs, _, rhs) => {
+            let post_inc_sp = |e: &crate::parse::Expr| {
+                matches!(e, crate::parse::Expr::Unary(_, inner)
+                    if matches!(&**inner, crate::parse::Expr::PostInc(addr, _) if crate::regmap::is_sp(addr)))
+            };
+            crate::regmap::is_sp(lhs) || post_inc_sp(lhs) || post_inc_sp(rhs)
+        }
+        _ => false,
     }
 }
 

@@ -1,0 +1,9 @@
+// error: push, pop, calls and changes to sp can't be in if #cc { }
+fn f(a) {
+    push(r4, lr)
+    #(a - 0)
+    if #eq {
+        pop(r4, pc)
+    }
+    pop(r4, pc)
+}
