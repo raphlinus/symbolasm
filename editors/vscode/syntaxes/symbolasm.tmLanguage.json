@@ -1,0 +1,138 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "symbolasm",
+  "scopeName": "source.symbolasm",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#attribute" },
+    { "include": "#item" },
+    { "include": "#label-def" },
+    { "include": "#statement" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.symbolasm"
+    },
+    "attribute": {
+      "begin": "#\\[",
+      "end": "\\]",
+      "name": "meta.attribute.symbolasm",
+      "patterns": [
+        { "match": "\\b(link_section|align)\\b", "name": "entity.other.attribute-name.symbolasm" },
+        { "include": "#string" },
+        { "include": "#number" }
+      ]
+    },
+    "item": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.symbolasm" },
+            "2": { "name": "entity.name.function.symbolasm" }
+          }
+        },
+        {
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.struct.symbolasm" },
+            "2": { "name": "entity.name.type.struct.symbolasm" }
+          }
+        },
+        {
+          "match": "\\b(static)(?:\\s+(mut))?\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.symbolasm" },
+            "2": { "name": "storage.modifier.mut.symbolasm" },
+            "3": { "name": "variable.other.static.symbolasm" }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.symbolasm" },
+            "2": { "name": "variable.other.constant.symbolasm" }
+          }
+        },
+        {
+          "match": "\\b(symbol)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.symbolasm" },
+            "2": { "name": "variable.other.symbol.symbolasm" }
+          }
+        }
+      ]
+    },
+    "label-def": {
+      "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)(:)\\s*(?=$|//)",
+      "captures": {
+        "1": { "name": "entity.name.label.symbolasm" },
+        "2": { "name": "punctuation.separator.symbolasm" }
+      }
+    },
+    "statement": {
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#string" },
+        {
+          "match": "\\b(goto)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.goto.symbolasm" },
+            "2": { "name": "entity.name.label.symbolasm" }
+          }
+        },
+        {
+          "match": "\\b(bl)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.call.symbolasm" },
+            "2": { "name": "entity.name.function.symbolasm" }
+          }
+        },
+        { "match": "\\b(bx|blx)\\b", "name": "keyword.control.branch.symbolasm" },
+        { "match": "\\b(if|else|loop|while|break)\\b", "name": "keyword.control.symbolasm" },
+        { "match": "\\b(as)\\b", "name": "keyword.operator.as.symbolasm" },
+        { "match": "\\b(mut)\\b", "name": "storage.modifier.mut.symbolasm" },
+        {
+          "match": "#(eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|[cnzv])\\b",
+          "name": "support.constant.condition.symbolasm"
+        },
+        { "match": "#(?=\\()", "name": "keyword.operator.flags.symbolasm" },
+        {
+          "match": "(@)\\s*(r[0-9]|r1[0-5]|sp|lr|pc)\\b",
+          "captures": {
+            "1": { "name": "keyword.operator.placement.symbolasm" },
+            "2": { "name": "variable.language.register.symbolasm" }
+          }
+        },
+        { "match": "\\b(r[0-9]|r1[0-5]|sp|lr|pc)\\b", "name": "variable.language.register.symbolasm" },
+        { "match": "\\b(u32|u16|u8|i32|i16|i8)\\b", "name": "storage.type.primitive.symbolasm" },
+        {
+          "match": "\\b(nop|wfe|wfi|sev|dmb|dsb|isb|cpsie|cpsid|push|pop|clz|rbit|rev|rev16|revsh|ror|pkhbt|pkhtb|lower16|upper16|count|size)\\b(?=\\s*\\()",
+          "name": "support.function.builtin.symbolasm"
+        },
+        { "match": "\\b(nop|wfe|wfi|sev|dmb|dsb|isb)\\b", "name": "support.function.builtin.symbolasm" },
+        { "match": "\\b[A-Z][A-Z0-9_]*\\b", "name": "variable.other.constant.symbolasm" },
+        { "match": "\\b[A-Z][A-Za-z0-9_]*\\b", "name": "entity.name.type.symbolasm" },
+        { "include": "#number" },
+        { "match": "->", "name": "punctuation.separator.return-type.symbolasm" },
+        {
+          "match": "<<=|>>=|\\+=|-=|\\*=|&=|\\|=|\\^=|==|!=|<<|>>|\\+\\+|--|\\.\\.|[-+*/&|^!<>=]",
+          "name": "keyword.operator.symbolasm"
+        }
+      ]
+    },
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.symbolasm",
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.symbolasm" }]
+    },
+    "number": {
+      "patterns": [
+        { "match": "\\b0x[0-9A-Fa-f_]+\\b", "name": "constant.numeric.hex.symbolasm" },
+        { "match": "\\b[0-9][0-9_]*\\b", "name": "constant.numeric.decimal.symbolasm" }
+      ]
+    }
+  }
+}

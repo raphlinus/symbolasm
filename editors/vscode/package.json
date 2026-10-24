@@ -1,0 +1,65 @@
+{
+  "name": "symbolasm",
+  "displayName": "symbolasm",
+  "description": "Syntax highlighting and a language server for symbolasm (.sy): cycle hints, instruction hovers, go to definition",
+  "version": "0.1.2",
+  "publisher": "raphlinus",
+  "license": "Apache-2.0 OR MIT",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:symbolasm"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "10.1.2"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "symbolasm",
+        "aliases": [
+          "symbolasm"
+        ],
+        "extensions": [
+          ".sy"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "symbolasm",
+      "properties": {
+        "symbolasm.serverPath": {
+          "type": "string",
+          "default": "symbolasm-lsp",
+          "description": "The language server binary, symbolasm-lsp: a name found on PATH (`cargo install --path lsp` puts it there) or a path, where ~ is the home directory."
+        },
+        "symbolasm.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Compiler arguments; the server uses --svd, as in [\"--svd\", \"/path/to/RP2350.svd\"]."
+        }
+      }
+    },
+    "grammars": [
+      {
+        "language": "symbolasm",
+        "scopeName": "source.symbolasm",
+        "path": "./syntaxes/symbolasm.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[symbolasm]": {
+        "editor.autoIndent": "advanced"
+      }
+    }
+  }
+}
