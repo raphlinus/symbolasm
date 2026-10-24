@@ -254,6 +254,7 @@ impl Server {
                 Facts {
                     source: None,
                     stmts: vec![],
+                    loops: vec![],
                     defs: vec![],
                     error: Some(facts::Diagnostic {
                         path: paths[0].clone(),
@@ -425,8 +426,17 @@ impl Server {
                 parts.push(describe_def(&a, def));
             }
         }
-        if !stmts.is_empty() {
+        if stmts.iter().any(|s| s.elided || !s.insns.is_empty()) {
             parts.push(insn_table(&stmts));
+        }
+        // On a `loop {` or `while {` line, one iteration's cycles
+        if let (Some(source), Some(file)) = (&a.facts.source, a.file) {
+            for l in &a.facts.loops {
+                let (f, line, _) = source.location(l.offset);
+                if f == file && line as u32 - 1 == pos.line {
+                    parts.push(format!("loop: {}", l.describe()));
+                }
+            }
         }
         if parts.is_empty() {
             return None;

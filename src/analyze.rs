@@ -152,6 +152,11 @@ struct Marker {
 struct Collected {
     insns: Vec<Insn>,
     markers: Vec<Marker>,
+    /// Each label's instruction
+    labels: HashMap<String, usize>,
+    /// The source offset of the statement each label comes from (for a
+    /// block's, its `loop {` or `while {`)
+    label_offsets: HashMap<String, usize>,
 }
 
 fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
@@ -166,6 +171,7 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
     let mut insns: Vec<Insn> = vec![];
     let mut markers: Vec<Marker> = vec![];
     let mut labels: HashMap<String, usize> = HashMap::new();
+    let mut label_offsets: HashMap<String, usize> = HashMap::new();
     let mut pending_labels: Vec<String> = vec![];
     let mut cur_fn: Option<usize> = None;
     // Whether each function starts word aligned: after a .balign of 4 or
@@ -198,6 +204,9 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
                 if let Some(&f) = fn_index.get(label) {
                     cur_fn = Some(f);
                     fn_aligned[f] = balign;
+                }
+                if let Some(m) = markers.last() {
+                    label_offsets.insert(label.to_owned(), m.offset);
                 }
                 pending_labels.push(label.to_owned());
             }
@@ -269,7 +278,12 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
         insn.size_why = size_why(insn);
     }
 
-    Ok(Collected { insns, markers })
+    Ok(Collected {
+        insns,
+        markers,
+        labels,
+        label_offsets,
+    })
 }
 
 /// One statement's instructions, for the language server
@@ -279,6 +293,47 @@ pub struct StmtInsns {
     /// The statement emits nothing (a move to the same register)
     pub elided: bool,
     pub insns: Vec<InsnFacts>,
+}
+
+/// A loop block's iteration (see `loops`), for the language server
+pub struct LoopFacts {
+    /// The source offset of its `loop {` or `while {`
+    pub offset: usize,
+    /// As a range for divides
+    pub cycles: (u32, u32),
+    /// Calls, whose callees aren't counted
+    pub calls: usize,
+    /// It contains another loop, counted once
+    pub inner: bool,
+}
+
+impl LoopFacts {
+    /// "27 cycles per iteration (inner loops once)"
+    pub fn describe(&self) -> String {
+        describe_loop(self.cycles, self.calls, self.inner)
+    }
+}
+
+fn describe_loop((lo, hi): (u32, u32), calls: usize, inner: bool) -> String {
+    let mut notes = vec![];
+    if calls > 0 {
+        let s = if calls == 1 { "" } else { "s" };
+        notes.push(format!("{calls} call{s} not included"));
+    }
+    if inner {
+        notes.push("inner loops once".to_string());
+    }
+    let cyc = if lo == hi {
+        format!("{lo}")
+    } else {
+        format!("{lo}-{hi}")
+    };
+    let notes = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", notes.join(", "))
+    };
+    format!("{cyc} cycles per iteration{notes}")
 }
 
 pub struct InsnFacts {
@@ -294,9 +349,26 @@ pub struct InsnFacts {
 
 /// The instructions of each statement in `asm`, which must have `@sy`
 /// markers (from `compile` with `facts`).
-pub fn statements(asm: &str, fns: &[(String, usize)]) -> Result<Vec<StmtInsns>, Error> {
-    let Collected { insns, markers } = collect(asm, fns)?;
-    Ok(markers
+pub fn statements(
+    asm: &str,
+    fns: &[(String, usize)],
+) -> Result<(Vec<StmtInsns>, Vec<LoopFacts>), Error> {
+    let c = collect(asm, fns)?;
+    let mut loop_facts = vec![];
+    for (f, (name, _)) in fns.iter().enumerate() {
+        for l in loops(&c.insns, &c.labels, &c.label_offsets, f, name) {
+            if let Some(offset) = l.offset {
+                loop_facts.push(LoopFacts {
+                    offset,
+                    cycles: l.cycles,
+                    calls: l.calls,
+                    inner: l.inner,
+                });
+            }
+        }
+    }
+    let Collected { insns, markers, .. } = c;
+    let stmts = markers
         .iter()
         .map(|m| StmtInsns {
             offset: m.offset,
@@ -316,7 +388,8 @@ pub fn statements(asm: &str, fns: &[(String, usize)]) -> Result<Vec<StmtInsns>, 
                 })
                 .collect(),
         })
-        .collect())
+        .collect();
+    Ok((stmts, loop_facts))
 }
 
 pub fn analyze(
@@ -327,7 +400,12 @@ pub fn analyze(
     fns: &[(String, usize)],
     opts: &Opts,
 ) -> Result<(), Error> {
-    let Collected { insns, markers } = collect(asm, fns)?;
+    let Collected {
+        insns,
+        markers,
+        labels,
+        label_offsets,
+    } = collect(asm, fns)?;
     if opts.legend {
         print!("{LEGEND}\n");
     }
@@ -373,6 +451,31 @@ pub fn analyze(
                 r.extend(m.insns.iter().map(|&i| Some(i)));
             }
         }
+        // Each loop's summary, after its closing brace
+        let mut insn_line = HashMap::new();
+        for m in &fn_markers {
+            for &i in &m.insns {
+                insn_line.insert(i, lines.line_of(m.offset));
+            }
+        }
+        let mut summaries: HashMap<usize, Vec<String>> = HashMap::new();
+        for l in loops(&insns, &labels, &label_offsets, f, name) {
+            let at = |i: usize| insn_line.get(&i).copied();
+            let local =
+                |gl: Option<usize>| gl.map_or("?".into(), |gl| lines.file_line(gl).1.to_string());
+            let close = l
+                .end_offset
+                .map(|o| lines.line_of(o))
+                .or(at(l.last))
+                .unwrap_or(end);
+            let what = describe_loop(l.cycles, l.calls, l.inner);
+            let text = format!(
+                "   loop {}-{}: {what}",
+                local(at(l.head)),
+                local(at(l.last))
+            );
+            summaries.entry(close).or_default().push(text);
+        }
         for gl in start..=end {
             let (_, local) = lines.file_line(gl);
             let text = lines.text(gl);
@@ -385,9 +488,163 @@ pub fn analyze(
                 }
                 _ => print_row(opts, local, None, false, text),
             }
+            for s in summaries.get(&gl).into_iter().flatten() {
+                println!("{s}");
+            }
         }
     }
     Ok(())
+}
+
+/// A `loop { }` or `while { } loop { }` block
+struct Loop {
+    /// The source offsets of its `loop {` or `while {`, and its closing
+    /// brace
+    offset: Option<usize>,
+    end_offset: Option<usize>,
+    /// Its first and last instructions
+    head: usize,
+    last: usize,
+    /// One iteration's cycles (see `loops`), as a range for divides
+    cycles: (u32, u32),
+    /// Calls on the path, whose callees aren't counted
+    calls: usize,
+    /// It contains another loop, counted once
+    inner: bool,
+}
+
+/// The loop blocks of function `name` (`f`), by the labels they bring in,
+/// with one iteration's cycles: the path from the block's start that stays
+/// in the block, taking a conditional branch only where falling through
+/// would leave it, following gotos, and ending at the first branch back to
+/// the start. A block with no such path (one that always breaks) is left
+/// out.
+fn loops(
+    insns: &[Insn],
+    labels: &HashMap<String, usize>,
+    label_offsets: &HashMap<String, usize>,
+    f: usize,
+    name: &str,
+) -> Vec<Loop> {
+    let fn_end = insns.iter().rposition(|i| i.func == f).map_or(0, |i| i + 1);
+    let target = |insn: &Insn| {
+        insn.ops.iter().find_map(|o| match o {
+            Op::Sym(s) => labels.get(s).copied(),
+            _ => None,
+        })
+    };
+    // "n", "nt/t" or "lo-hi"
+    let cost = |insn: &Insn, taken: bool| -> (u32, u32) {
+        let c = &insn.cyc;
+        if let Some((nt, t)) = c.split_once('/') {
+            let n = if taken { t } else { nt };
+            let n = n.parse().unwrap_or(0);
+            (n, n)
+        } else if let Some((lo, hi)) = c.split_once('-') {
+            (lo.parse().unwrap_or(0), hi.parse().unwrap_or(0))
+        } else {
+            let n = c.parse().unwrap_or(0);
+            (n, n)
+        }
+    };
+    // Each loop block's start(s) and end, from its labels,
+    // .L<name>_<id>_<which>
+    let prefix = format!(".L{name}_");
+    let mut ids: Vec<usize> = labels
+        .keys()
+        .filter_map(|l| {
+            let (id, which) = l.strip_prefix(&prefix)?.split_once('_')?;
+            matches!(which, "while" | "loop").then(|| id.parse().ok())?
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let mut blocks = vec![];
+    for id in ids {
+        let label = |which: &str| labels.get(&format!("{prefix}{id}_{which}")).copied();
+        let (start, loop_part) = (label("while"), label("loop"));
+        let Some(head) = start.or(loop_part).filter(|&h| insns[h].func == f) else {
+            continue;
+        };
+        let heads: Vec<usize> = [start, loop_part].into_iter().flatten().collect();
+        let which = if start.is_some() { "while" } else { "loop" };
+        let offset = label_offsets.get(&format!("{prefix}{id}_{which}")).copied();
+        let end_offset = label_offsets.get(&format!("{prefix}{id}_break")).copied();
+        let end = label("break").unwrap_or(fn_end);
+        blocks.push((head, heads, end, offset, end_offset));
+    }
+    let mut out = vec![];
+    for (head, heads, end, offset, end_offset) in &blocks {
+        let (head, end) = (*head, *end);
+        let inside = |t: usize| t >= head && t < end;
+        let mut total = (0, 0);
+        let mut calls = 0;
+        let mut i = head;
+        let mut cycles = None;
+        let add = |total: &mut (u32, u32), c: (u32, u32)| {
+            total.0 += c.0;
+            total.1 += c.1;
+        };
+        for _ in 0..insns.len() {
+            if !inside(i) {
+                break;
+            }
+            let insn = &insns[i];
+            let base = insn.base.as_str();
+            if matches!(base, "bl" | "blx") {
+                calls += 1;
+            }
+            let jumps = matches!(base, "b" | "cbz" | "cbnz");
+            let cond = insn.cond.is_some() || matches!(base, "cbz" | "cbnz");
+            let to = if jumps { target(insn) } else { None };
+            if let Some(t) = to
+                && heads.contains(&t)
+            {
+                add(&mut total, cost(insn, true));
+                cycles = Some(total);
+                break;
+            }
+            let returns = base == "bx"
+                || (base == "pop"
+                    && insn
+                        .ops
+                        .iter()
+                        .any(|o| matches!(o, Op::List(l) if l.contains(&15))));
+            match to {
+                Some(t) if !cond => {
+                    add(&mut total, cost(insn, true));
+                    i = t;
+                }
+                Some(t) if inside(t) && !inside(i + 1) => {
+                    add(&mut total, cost(insn, true));
+                    i = t;
+                }
+                _ if returns && !cond => break,
+                _ => {
+                    add(&mut total, cost(insn, false));
+                    i += 1;
+                }
+            }
+        }
+        if let Some(cycles) = cycles {
+            let last = (head..end)
+                .rev()
+                .find(|&k| insns[k].func == f)
+                .unwrap_or(head);
+            out.push(Loop {
+                offset: *offset,
+                end_offset: *end_offset,
+                head,
+                last,
+                cycles,
+                calls,
+                inner: blocks
+                    .iter()
+                    .any(|(h, _, e, _, _)| *h != head && *h > head && *e <= end),
+            });
+        }
+    }
+    out
 }
 
 fn print_row(opts: &Opts, line: usize, insn: Option<&Insn>, stmt: bool, src: &str) {

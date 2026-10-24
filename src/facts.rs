@@ -9,7 +9,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     Source,
-    analyze::{self, InsnFacts},
+    analyze::{self, InsnFacts, LoopFacts},
     error::LocError,
     parse::{Item, Program},
 };
@@ -19,6 +19,8 @@ pub struct Facts {
     pub source: Option<Source>,
     /// In source order, for all the program's files
     pub stmts: Vec<StmtFacts>,
+    /// Each loop block's iteration
+    pub loops: Vec<LoopFacts>,
     pub defs: Vec<Def>,
     pub error: Option<Diagnostic>,
 }
@@ -84,6 +86,7 @@ pub fn facts(paths: &[String], overrides: HashMap<PathBuf, String>, svd: Option<
             return Facts {
                 source: None,
                 stmts: vec![],
+                loops: vec![],
                 defs: vec![],
                 error: Some(Diagnostic {
                     path,
@@ -96,11 +99,11 @@ pub fn facts(paths: &[String], overrides: HashMap<PathBuf, String>, svd: Option<
     };
     let result = crate::compile(&source, svd, true).and_then(|out| {
         let asm = String::from_utf8(out.asm)?;
-        let insns = analyze::statements(&asm, &out.fns)?;
-        Ok((insns, out.places, out.defs))
+        let (insns, loops) = analyze::statements(&asm, &out.fns)?;
+        Ok((insns, loops, out.places, out.defs))
     });
     match result {
-        Ok((insns, places, defs)) => {
+        Ok((insns, loops, places, defs)) => {
             let mut places: HashMap<usize, _> = places.into_iter().map(|p| (p.offset, p)).collect();
             let stmts = insns
                 .into_iter()
@@ -120,6 +123,7 @@ pub fn facts(paths: &[String], overrides: HashMap<PathBuf, String>, svd: Option<
             Facts {
                 source: Some(source),
                 stmts,
+                loops,
                 defs,
                 error: None,
             }
@@ -129,6 +133,7 @@ pub fn facts(paths: &[String], overrides: HashMap<PathBuf, String>, svd: Option<
             Facts {
                 source: Some(source),
                 stmts: vec![],
+                loops: vec![],
                 defs: vec![],
                 error,
             }
