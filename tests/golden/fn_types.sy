@@ -9,12 +9,17 @@ struct Vtable {
 symbol divmod: fn[abi = loose](u32, u32) -> (u32, u32)
 
 fn[abi = loose] divmod(n, d) -> (q, r) {
+    // results are placed in r0 and r1 when assigned
+    t @r2 = n / d
+    r = n - t * d
+    q = t
     bx lr
 }
 
 symbol divmod: fn[abi = loose](n: u32, d) -> (q, r: u32)
 
 fn render(obj: *Vtable, y) -> done {
+    done = 1
     bx lr
 }
 

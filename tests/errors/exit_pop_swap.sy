@@ -1,0 +1,5 @@
+// error: at this return, r4 should hold the r4 it had at entry: it's in lr
+fn f() {
+    push(r4, lr)
+    pop(lr, pc)
+}

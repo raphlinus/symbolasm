@@ -1,0 +1,6 @@
+// error: the variables placed take 8 bytes, but sp moves by 12
+fn f() {
+    sp -= 12 (x, y)
+    sp += 12
+    bx lr
+}

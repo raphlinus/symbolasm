@@ -1,0 +1,5 @@
+// error: y is a result, so it's always placed in r0
+fn f() -> y {
+    y @r1 = 1
+    bx lr
+}

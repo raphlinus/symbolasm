@@ -23,14 +23,44 @@ use crate::{
 
 /// What the analysis needs to know beyond the statements
 pub struct FnCtx<'a> {
-    /// The ABI of the function being analyzed
+    /// The function being analyzed
+    pub name: &'a str,
     pub abi: Abi,
+    /// The function's results, in register order
+    pub rets: Vec<String>,
     pub types: &'a TypePool,
     pub globals: &'a Globals,
     pub typemap: &'a TypeMap,
 }
 
-impl FnCtx<'_> {
+impl<'a> FnCtx<'a> {
+    pub fn new(
+        func: &'a crate::parse::Function,
+        types: &'a TypePool,
+        globals: &'a Globals,
+        typemap: &'a TypeMap,
+    ) -> Self {
+        let rets = func
+            .rets
+            .0
+            .iter()
+            .filter_map(|a| a.var.as_ident().map(|s| s.to_owned()))
+            .collect();
+        FnCtx {
+            name: func.name.as_ident().unwrap_or_default(),
+            abi: func.abi,
+            rets,
+            types,
+            globals,
+            typemap,
+        }
+    }
+
+    /// The signature of the function being analyzed
+    pub fn own_sig(&self) -> Option<&FnSig> {
+        self.types.sig(*self.globals.fns.get(self.name)?)
+    }
+
     /// The signature of a call's target: a variable holding a function's
     /// address, or a function by name
     pub fn callee(&self, target: &str) -> Option<&FnSig> {

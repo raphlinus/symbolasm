@@ -1,5 +1,7 @@
 // Flag-setting forms (16 bit encodings) are used only where the flags
 // they write are dead.
+symbol other: fn()
+
 fn dead(a: u32, b: u32, p: *u32) {
     x @r3 = 5
     x += 1
@@ -13,7 +15,8 @@ fn dead(a: u32, b: u32, p: *u32) {
     bx lr
 }
 
-fn live(a: u32, b: u32) {
+// wild, since it returns after a call without saving lr
+fn[abi = wild] live(a: u32, b: u32) {
     loop {
         #(a -= 1)
         // Z is read by the branch, so these keep their 32 bit forms
@@ -45,7 +48,8 @@ done:
 }
 
 // Flags are dead at a return; high registers have no 16 bit forms
-fn high(a: u32) {
+// wild, since it uses r8 without saving it
+fn[abi = wild] high(a: u32) {
     x @r8 = 5
     a = a + 1
     bx lr

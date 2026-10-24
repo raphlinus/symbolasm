@@ -1,0 +1,7 @@
+// error: at this return, result y should be in r0: it isn't placed on another path into here
+fn f(a) -> y {
+    if a == 0 goto done
+    y = 1
+done:
+    bx lr
+}

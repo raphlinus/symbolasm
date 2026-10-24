@@ -1,0 +1,6 @@
+// error: g isn't a function here; declare it with symbol g: fn(...)
+fn f() {
+    push(r4, lr)
+    call g()
+    pop(r4, pc)
+}

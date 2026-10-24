@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    abicheck,
     error::{Error, WithLoc},
     facts::{Def, DefKind, Place},
     flags,
@@ -277,7 +278,16 @@ impl FnScope {
                     let live = live_flags[ix];
                     writeln!(w, "@sy {} {kind} {live}", func.locs[ix].offset)?;
                 }
-                let result = if IrCtx::can_lower(stmt) {
+                let ctx = FnCtx::new(func, types, globals, typemap);
+                let target = match stmt {
+                    Stmt::Call(call) => abicheck::check_call(call, &regmap, &ctx).map(Some),
+                    _ => abicheck::check_stmt(stmt, &regmap, &ctx).map(|_| None),
+                }
+                .at(&func.locs[ix])?;
+                let result = if let (Stmt::Call(call), Some(target)) = (stmt, target) {
+                    let mut gen_ctx = GenCtx::new(types, w);
+                    gen_ctx.gen_call(&target, call.tail, if_state)
+                } else if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types, typemap, globals);
                     ir_ctx.lower(stmt).and_then(|ir| {
                         let mut gen_ctx = GenCtx::new(types, w);
@@ -290,12 +300,7 @@ impl FnScope {
                 };
                 result.at(&func.locs[ix])?;
                 let before = facts.as_ref().map(|_| places(&regmap, types));
-                let ctx = FnCtx {
-                    abi: func.abi,
-                    types,
-                    globals,
-                    typemap,
-                };
+                let ctx = FnCtx::new(func, types, globals, typemap);
                 regmap.apply(stmt, &ctx);
                 if let (Some(sink), Some(before)) = (facts.as_deref_mut(), before) {
                     sink.push(StmtPlaces {
@@ -367,6 +372,12 @@ fn analyze_branch(stmt: &Stmt) -> (BranchKind, Option<&str>) {
             Insn::Push(_) | Insn::Pop(_) | Insn::Cps(_, _) | Insn::NoOperand(_) => {
                 (BranchKind::NotBranch, None)
             }
+        }
+    } else if let Stmt::Call(call) = stmt {
+        if call.tail {
+            (BranchKind::UncondBranch, None)
+        } else {
+            (BranchKind::FunctionCall, None)
         }
     } else {
         (BranchKind::NotBranch, None)

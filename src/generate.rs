@@ -9,11 +9,13 @@
 use std::{borrow::Cow, collections::HashMap, io::Write, ops::Deref};
 
 use crate::{
+    abicheck::CallTarget,
     error::Error,
     flags,
     ifthen::IfState,
     ir::{Assign, BinOp, Body, Expr, Half, Ir, UnaryOp},
     lex::{TokBody, Token},
+    parse,
     regmap::{Regmap, parse_register},
     stmt::Stmt,
     types::{Type, TypeHandle, TypePool},
@@ -1001,6 +1003,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
             Stmt::Label(l) => {
                 writeln!(self.w, "{}:", labels.asm_name(l))?;
             }
+            Stmt::SpAdjust(amount, _) => {
+                let parse::Expr::Literal(lit) = amount else {
+                    unreachable!("prepare folds the amount")
+                };
+                let TokBody::Number(n) = lit.tok else {
+                    unreachable!()
+                };
+                let insn = if n < 0 { "sub" } else { "add" };
+                self.start_insn(insn, if_state)?;
+                writeln!(self.w, " sp, sp, #{}", n.abs())?;
+            }
             Stmt::Insn(insn) => match insn {
                 crate::stmt::Insn::Bx(target) => {
                     if let Some(id) = target.as_ident() {
@@ -1121,6 +1134,30 @@ impl<'a, W: Write> GenCtx<'a, W> {
             write_reg(*n, self.w)?;
         }
         writeln!(self.w, "}}")?;
+        Ok(())
+    }
+
+    pub fn gen_call(
+        &mut self,
+        target: &CallTarget,
+        tail: bool,
+        if_state: &IfState,
+    ) -> Result<(), Error> {
+        if !matches!(if_state, IfState::Default) {
+            Err("a call can't be conditional")?;
+        }
+        match target {
+            CallTarget::Name(name) => {
+                self.start_insn(if tail { "b" } else { "bl" }, if_state)?;
+                writeln!(self.w, " {name}")?;
+            }
+            CallTarget::Reg(r) => {
+                self.start_insn(if tail { "bx" } else { "blx" }, if_state)?;
+                write!(self.w, " ")?;
+                write_reg(*r, self.w)?;
+                writeln!(self.w)?;
+            }
+        }
         Ok(())
     }
 

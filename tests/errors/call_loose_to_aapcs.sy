@@ -1,0 +1,8 @@
+// error: an aapcs function like putc can only be called from an aapcs function
+symbol putc: fn(c: u8)
+
+fn[abi = loose] f(c) {
+    push(lr)
+    call putc(c)
+    pop(pc)
+}

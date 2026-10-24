@@ -1,0 +1,10 @@
+// error: a tail call returns g's results, which differ from this function's
+fn g() -> (a, b) {
+    a = 1
+    b = 2
+    bx lr
+}
+
+fn f() -> a {
+    #[tail] call g()
+}

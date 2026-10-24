@@ -35,7 +35,7 @@ impl<'a> TypeInferCtx<'a> {
     }
 
     pub fn infer(mut self, func: &Function) -> Result<TypeMap, Error> {
-        for arg in &func.args.0 {
+        for arg in func.args.0.iter().chain(&func.rets.0) {
             let ty = if let Some(ast_ty) = &arg.ty.as_ref() {
                 self.types.intern_from_ast(ast_ty)?
             } else {
@@ -83,6 +83,46 @@ impl<'a> TypeInferCtx<'a> {
                 }
             }
             Stmt::WithAddrUpdate(stmt, _, _, _) => self.infer_stmt(stmt),
+            Stmt::Call(call) => {
+                let name = call.target.as_ident().unwrap_or_default();
+                let ty = self
+                    .map
+                    .map
+                    .get(name)
+                    .copied()
+                    .or_else(|| self.globals.fn_ty(name, self.types));
+                let Some(rets) = ty.and_then(|t| self.types.sig(t)).map(|s| s.rets.clone()) else {
+                    return false;
+                };
+                let mut changed = false;
+                for (ret, ty) in call.rets.iter().zip(rets) {
+                    if let Some(var) = assigned_var(ret)
+                        && !self.map.map.contains_key(var)
+                    {
+                        self.map.map.insert(var.to_owned(), ty);
+                        changed = true;
+                    }
+                }
+                changed
+            }
+            Stmt::SpAdjust(_, places) => {
+                let mut changed = false;
+                for (var, ty) in places {
+                    let Some(var) = var.as_ident() else { continue };
+                    if self.map.map.contains_key(var) {
+                        continue;
+                    }
+                    let ty = match ty {
+                        Some(ty) => self.types.intern_from_ast(ty).ok(),
+                        None => Some(self.types.get_handle(&Type::U32)),
+                    };
+                    if let Some(ty) = ty {
+                        self.map.map.insert(var.to_owned(), ty);
+                        changed = true;
+                    }
+                }
+                changed
+            }
             _ => false,
         }
     }
@@ -137,6 +177,9 @@ impl<'a> TypeInferCtx<'a> {
                 _ => None,
             },
             parse::Expr::Cast(_expr, ty) => self.types.intern_from_ast(ty).ok(),
+            parse::Expr::Field(expr, field) if expr.as_ident() == Some("sp") => {
+                self.map.map.get(field.as_ident()?).copied()
+            }
             parse::Expr::Field(expr, field) => {
                 if expr.as_ident() == Some("peripherals") {
                     if let Some(name) = field.as_ident()
@@ -181,6 +224,9 @@ impl TypeInferCtx<'_> {
     fn place_type(&mut self, expr: &parse::Expr) -> Option<TypeHandle> {
         match expr {
             parse::Expr::Ident(id) => self.globals.static_ty(id.as_ident()?),
+            parse::Expr::Field(base, field) if base.as_ident() == Some("sp") => {
+                self.map.map.get(field.as_ident()?).copied()
+            }
             parse::Expr::Field(base, field) => {
                 let struct_ty = if let parse::Expr::Field(inner, periph) = &**base
                     && inner.as_ident() == Some("peripherals")

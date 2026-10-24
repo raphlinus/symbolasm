@@ -8,7 +8,7 @@ use crate::{
     error::{Error, WithLoc},
     lex::{Loc, TokBody, TokBuf, Token},
     precedence::Precedence,
-    stmt::{Insn, Stmt},
+    stmt::{Call, Insn, Stmt},
 };
 
 #[derive(Debug)]
@@ -619,6 +619,7 @@ fn is_branch(stmt: &Stmt) -> bool {
             true
         }
         Stmt::Insn(Insn::Pop(regs)) => regs.iter().any(|r| r.as_ident() == Some("pc")),
+        Stmt::Call(call) => call.tail,
         _ => false,
     }
 }
@@ -737,7 +738,14 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                     toks.expect(&TokBody::Newline)?;
                     return Ok(Stmt::Insn(Insn::B(label)));
                 }
+                "call" => return parse_call(toks, vec![], false),
                 _ => (),
+            }
+            if ident == "sp"
+                && let Some(op) = toks.peek()
+                && matches!(op.tok, TokBody::PlusEquals | TokBody::MinusEquals)
+            {
+                return parse_sp_adjust(toks);
             }
             toks.back_one();
             let lhs = parse_expr(toks)?;
@@ -745,6 +753,9 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
                 if op.tok.is_assign_op() {
                     // TODO: validate that lhs is assignable
                     let op = toks.next().unwrap().clone();
+                    if let Some(stmt) = parse_call_rhs(toks, &lhs, &op)? {
+                        return Ok(stmt);
+                    }
                     let rhs = parse_expr(toks)?;
                     let stmt = Stmt::Assign(lhs, op.clone(), rhs);
                     addr_update_helper(toks, stmt)
@@ -777,10 +788,23 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
             toks.back_one();
             let lhs = parse_expr(toks)?;
             let op = toks.next().ok_or("eof in assignment")?.clone();
+            if let Some(stmt) = parse_call_rhs(toks, &lhs, &op)? {
+                return Ok(stmt);
+            }
             // TODO: maybe validate
             let rhs = parse_expr(toks)?;
             let stmt = Stmt::Assign(lhs, op, rhs);
             addr_update_helper(toks, stmt)
+        }
+        TokBody::Octothorpe if toks.expect_opt(&TokBody::OpenBracket) => {
+            if !toks.expect_opt_ident("tail") {
+                Err("the statement attribute is #[tail], before call")?;
+            }
+            toks.expect(&TokBody::CloseBracket)?;
+            if !toks.expect_opt_ident("call") {
+                Err("#[tail] goes before call")?;
+            }
+            parse_call(toks, vec![], true)
         }
         TokBody::Octothorpe => parse_withflags(toks),
         TokBody::CloseBrace => {
@@ -802,6 +826,90 @@ fn parse_stmt(toks: &mut TokBuf) -> Result<Stmt, Error> {
         }
         _ => Err(format!("unhandled token to begin stmt {:?}", first.tok))?,
     }
+}
+
+/// `call target(args)`. Note: "call" has been consumed.
+fn parse_call(toks: &mut TokBuf, rets: Vec<Expr>, tail: bool) -> Result<Stmt, Error> {
+    let target = toks.next().ok_or("expected a function to call")?.clone();
+    if !target.is_ident() {
+        Err("expected a function to call")?;
+    }
+    toks.expect(&TokBody::OpenParen)?;
+    let args = parse_call_args(toks)?;
+    toks.expect(&TokBody::Newline)?;
+    Ok(Stmt::Call(Call {
+        rets,
+        target,
+        args,
+        tail,
+    }))
+}
+
+/// `lhs = call target(args)`, if the right side is a call. Note: the
+/// assignment op has been consumed.
+fn parse_call_rhs(toks: &mut TokBuf, lhs: &Expr, op: &Token) -> Result<Option<Stmt>, Error> {
+    if !toks.peek().is_some_and(|t| t.match_str("call")) {
+        return Ok(None);
+    }
+    if op.tok != TokBody::Equals {
+        Err("a call's results can only be assigned with =")?;
+    }
+    toks.next();
+    let rets = match lhs {
+        Expr::Tuple(rets) => rets.clone(),
+        _ => vec![lhs.clone()],
+    };
+    for ret in &rets {
+        let ok = match ret {
+            Expr::Binop(var, op, _) if op.tok == TokBody::At => var.as_ident().is_some(),
+            _ => ret.as_ident().is_some(),
+        };
+        if !ok {
+            Err("a call's results must be variables")?;
+        }
+    }
+    parse_call(toks, rets, false).map(Some)
+}
+
+/// `sp -= n (x, p: Point)` or `sp += n`, with n a number or constant. Note:
+/// "sp" has been consumed.
+fn parse_sp_adjust(toks: &mut TokBuf) -> Result<Stmt, Error> {
+    let op = toks.next().unwrap().clone();
+    let amount = toks.next().ok_or("expected an amount")?.clone();
+    let amount = match &amount.tok {
+        TokBody::Number(_) => Expr::Literal(amount),
+        TokBody::Identifier(_) => Expr::Ident(amount),
+        _ => Err("sp can only change by a constant")?,
+    };
+    let mut places = vec![];
+    if toks.expect_opt(&TokBody::OpenParen) {
+        if op.tok != TokBody::MinusEquals {
+            Err("variables are placed with sp -= n (...)")?;
+        }
+        while !toks.expect_opt(&TokBody::CloseParen) {
+            let var = toks.next().ok_or("expected a variable")?.clone();
+            if !var.is_ident() {
+                Err("expected a variable")?;
+            }
+            let ty = if toks.expect_opt(&TokBody::Colon) {
+                Some(parse_type(toks)?)
+            } else {
+                None
+            };
+            places.push((var, ty));
+            if !toks.expect_opt(&TokBody::Comma) {
+                toks.expect(&TokBody::CloseParen)?;
+                break;
+            }
+        }
+    }
+    toks.expect(&TokBody::Newline)?;
+    let amount = if op.tok == TokBody::MinusEquals {
+        Expr::Unary(op, Box::new(amount))
+    } else {
+        amount
+    };
+    Ok(Stmt::SpAdjust(amount, places))
 }
 
 fn addr_update_helper(toks: &mut TokBuf, stmt: Stmt) -> Result<Stmt, Error> {

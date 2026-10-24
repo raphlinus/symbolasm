@@ -1,5 +1,5 @@
 // *p++ and *p-- update the address by the size of the transfer.
-fn post_inc(p: *u32, b: *u8, h: *i16) {
+fn[abi = wild] post_inc(p: *u32, b: *u8, h: *i16) {
     x @r3 = *p++
     *p++ = x
     *p-- = x

@@ -1,0 +1,8 @@
+// error: g is a loose function, which may clobber r4, but this aapcs function must keep it
+fn[abi = loose] g() {
+    bx lr
+}
+
+fn f() {
+    #[tail] call g()
+}

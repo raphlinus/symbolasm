@@ -6,6 +6,9 @@
 .type divmod, %function
 .thumb_func
 divmod:
+    udiv r2, r0, r1
+    mls r1, r2, r1, r0
+    mov r0, r2
     bx lr
 .size divmod, . - divmod
 .section .text
@@ -13,6 +16,7 @@ divmod:
 .type render, %function
 .thumb_func
 render:
+    movs r0, #1
     bx lr
 .size render, . - render
 .section .text

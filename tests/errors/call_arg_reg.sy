@@ -1,0 +1,9 @@
+// error: argument 1 of putc goes in r0, but c is in r1
+symbol putc: fn(c: u8)
+
+fn f() {
+    push(r4, lr)
+    c @r1 = 65
+    call putc(c)
+    pop(r4, pc)
+}

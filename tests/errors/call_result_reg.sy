@@ -1,0 +1,11 @@
+// error: result 1 of g is in r0, so x must be placed there
+fn g() -> y {
+    y = 1
+    bx lr
+}
+
+fn f() {
+    push(r4, lr)
+    x @r1 = call g()
+    pop(r4, pc)
+}

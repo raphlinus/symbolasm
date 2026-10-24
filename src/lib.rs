@@ -17,6 +17,7 @@ use crate::{
 };
 
 mod abi;
+mod abicheck;
 pub mod analyze;
 mod bitset;
 mod compile;
@@ -33,6 +34,7 @@ mod lex;
 pub mod load;
 mod parse;
 mod precedence;
+mod prepare;
 mod regmap;
 mod stmt;
 mod svd;
@@ -135,7 +137,7 @@ pub struct Output {
 pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output, Error> {
     let src = &source.src;
     let mut tokens = tokenize(src)?;
-    let program = parse_program(&mut tokens)?;
+    let mut program = parse_program(&mut tokens)?;
     let mut types = TypePool::new();
     let mut globals = Globals::default();
 
@@ -212,17 +214,14 @@ pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output
     writeln!(w, ".thumb")?;
 
     let mut places = vec![];
-    for item in &program.0 {
+    for item in &mut program.0 {
         if let parse::Item::Function(func) = item {
+            prepare::prepare(func, &mut types)?;
+            let func = &*func;
             let typemap = TypeInferCtx::new(&mut types, &globals)
                 .infer(func)
                 .at(&func.name.loc)?;
-            let ctx = regmap::FnCtx {
-                abi: func.abi,
-                types: &types,
-                globals: &globals,
-                typemap: &typemap,
-            };
+            let ctx = regmap::FnCtx::new(func, &types, &globals, &typemap);
             let mut scope = FnScope::default();
             scope.analyze(func, &ctx)?;
             let sink = if facts {

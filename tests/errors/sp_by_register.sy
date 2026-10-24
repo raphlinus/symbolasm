@@ -1,0 +1,5 @@
+// error: sp can only change by a constant (sp -= n), or by push and pop, outside a wild function
+fn f(a) {
+    sp = sp - a
+    bx lr
+}

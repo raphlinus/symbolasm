@@ -1,0 +1,5 @@
+// error: at this return, sp is 4 below where it was at entry
+fn f() {
+    push(r4)
+    bx lr
+}

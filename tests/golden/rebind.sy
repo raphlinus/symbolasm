@@ -1,6 +1,8 @@
 // Moving a variable to another register under the same name: its old
 // register no longer holds it, so killing that register (by a call, or by
 // placing something else there) leaves the variable in its new one.
+symbol other: fn()
+
 
 fn read_after_call(e: *u8) {
     push(r4, lr)

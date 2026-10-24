@@ -1,0 +1,6 @@
+// error: bl to g, which isn't defined; declare it with symbol g: fn(...)
+fn f() {
+    push(r4, lr)
+    bl g
+    pop(r4, pc)
+}

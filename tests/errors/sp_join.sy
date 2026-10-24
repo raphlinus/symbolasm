@@ -1,0 +1,7 @@
+// error: sp is where it was at entry on one path into here and 4 below where it was at entry on another
+fn[abi = loose] f(a) {
+    if a == 0 goto done
+    push(a)
+done:
+    bx lr
+}

@@ -1,0 +1,5 @@
+// error: popping pc returns, but its slot holds the r5 it had at entry, not the lr this function had at entry
+fn f() {
+    push(r4, r5)
+    pop(r4, pc)
+}

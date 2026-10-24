@@ -1,0 +1,60 @@
+// Calls checked against signatures and ABIs
+
+symbol putc: fn(c: u8)
+symbol sum5: fn(a, b, c, d, e) -> total
+
+fn[abi = loose] divmod(n, d) -> (q, r) {
+    t @r2 = n / d
+    r = n - t * d
+    q = t
+    bx lr
+}
+
+// A loose callee may clobber r4-r7, so an aapcs caller saves them all; r3
+// pads the push so sp stays 8 byte aligned for putc
+fn print_digits(n) {
+    push(r3, r4, r5, r6, r7, lr)
+    while {
+        if n == 0 goto break
+    } loop {
+        ten @r1 = 10
+        (n, digit @r1) = call divmod(n, ten)
+        n @r4 = n
+        c @r0 = digit + 48
+        call putc(c)
+        n @r0 = n
+        #(n - 0)
+        if #ne goto loop
+    }
+    pop(r3, r4, r5, r6, r7, pc)
+}
+
+struct Obj {
+    draw: fn[abi = loose](obj: *Obj, y) -> ok
+}
+
+// A call through a function's address
+fn[abi = loose] draw_one(obj: *Obj, y) -> ok {
+    push(lr)
+    f @r4 = obj.draw
+    ok = call f(obj, y)
+    pop(pc)
+}
+
+// The fifth argument goes on the stack, with padding to keep sp 8 byte
+// aligned at the call
+fn five(a, b, c, d) -> total {
+    push(r4, lr)
+    sp -= 4
+    e @r4 = 5
+    push(e)
+    total = call sum5(a, b, c, d, sp.e)
+    sp += 8
+    pop(r4, pc)
+}
+
+// A tail call returns the callee's results
+fn[abi = loose] divmod10(n) -> (q, r) {
+    ten @r1 = 10
+    #[tail] call divmod(n, ten)
+}

@@ -1,0 +1,8 @@
+// error: calling aapcs function putc needs sp 8 byte aligned, but it's 4 below where it was at entry
+symbol putc: fn(c: u8)
+
+fn f(c) {
+    push(lr)
+    call putc(c)
+    pop(pc)
+}

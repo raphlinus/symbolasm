@@ -1,0 +1,9 @@
+// error: at this return, lr should hold the lr it had at entry: the call to g clobbers lr
+symbol g: fn()
+
+fn f() {
+    sp -= 8
+    call g()
+    sp += 8
+    bx lr
+}

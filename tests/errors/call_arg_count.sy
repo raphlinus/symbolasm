@@ -1,0 +1,8 @@
+// error: putc takes 1 arguments, not 2
+symbol putc: fn(c: u8)
+
+fn f(a, b) {
+    push(r4, lr)
+    call putc(a, b)
+    pop(r4, pc)
+}

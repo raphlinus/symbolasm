@@ -1,0 +1,10 @@
+// error: g is a wild function, so only a wild function can call it
+fn[abi = wild] g() {
+    bx lr
+}
+
+fn f() {
+    push(r4, lr)
+    call g()
+    pop(r4, pc)
+}

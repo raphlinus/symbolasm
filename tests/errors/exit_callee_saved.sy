@@ -1,0 +1,5 @@
+// error: at this return, r4 should hold the r4 it had at entry: r4 now holds x
+fn f() {
+    x @r4 = 1
+    bx lr
+}

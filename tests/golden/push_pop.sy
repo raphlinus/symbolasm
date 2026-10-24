@@ -1,4 +1,6 @@
 // push/pop, and moves to the same register being elided.
+symbol elsewhere: fn()
+
 
 fn calls_out(a) {
     push(r4, lr)
