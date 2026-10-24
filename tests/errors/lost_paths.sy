@@ -1,0 +1,9 @@
+// error: x is no longer in a register: it's in r2 on another path into here
+fn f(a: u32) {
+    x @r1 = 3
+    if a == 0 goto skip
+    x @r2 = 5
+skip:
+    y @r3 = x
+    bx lr
+}

@@ -1,0 +1,11 @@
+// error: x is no longer in a register: the call to g clobbers r1
+fn g() {
+    bx lr
+}
+
+fn f() {
+    x @r1 = 3
+    bl g
+    y @r2 = x
+    bx lr
+}

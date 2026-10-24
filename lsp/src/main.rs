@@ -1,8 +1,8 @@
 // Copyright 2026 Raph Levien
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! A language server for symbolasm: compile errors as diagnostics, each
-//! statement's cycles as an inlay hint, hovers with the instructions a
+//! A language server for symbolasm: compile errors as diagnostics, the
+//! cycles of each statement that loses some as an inlay hint, hovers with the instructions a
 //! statement compiles to and where its variables are placed, go to
 //! definition and highlighting of a name's uses.
 //!
@@ -11,11 +11,7 @@
 
 mod text;
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    rc::Rc,
-};
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
@@ -47,8 +43,6 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 struct Options {
     /// Command line arguments: only `--svd path` is used
     args: Vec<String>,
-    /// Hint labels not shown, as the norm
-    hidden_hints: Option<Vec<String>>,
 }
 
 struct Doc {
@@ -68,7 +62,6 @@ struct Analysis {
 struct Server {
     conn: Connection,
     svd: Option<String>,
-    hidden: HashSet<String>,
     docs: HashMap<Uri, Doc>,
     /// Cleared whenever an open file changes, since any program may use it
     cache: HashMap<Uri, Rc<Analysis>>,
@@ -108,15 +101,9 @@ fn main() -> Result<(), Error> {
         .iter()
         .position(|a| a == "--svd" || a == "-s")
         .and_then(|i| options.args.get(i + 1).cloned());
-    let hidden = options
-        .hidden_hints
-        .unwrap_or_else(|| vec!["1".into(), "0/1".into(), "1/2".into()])
-        .into_iter()
-        .collect();
     let mut server = Server {
         conn,
         svd,
-        hidden,
         docs: HashMap::new(),
         cache: HashMap::new(),
         last_good: HashMap::new(),
@@ -389,7 +376,13 @@ impl Server {
             let Some(text) = label(&stmts) else {
                 continue;
             };
-            if self.hidden.contains(&text) {
+            // Only lines that lose cycles: an instruction that costs more by
+            // its nature (push, ldm, bl) isn't a problem
+            if !stmts
+                .iter()
+                .flat_map(|s| &s.insns)
+                .any(|i| !i.cyc_why.is_empty())
+            {
                 continue;
             }
             hints.push(InlayHint {
@@ -621,19 +614,23 @@ fn unique(chars: impl Iterator<Item = char>) -> String {
     s
 }
 
-/// The instructions of a line's statements (size and its why, cycles and
-/// their why, asm), and what the why codes mean
+/// The instructions of a line's statements (size in bits, so it doesn't
+/// read as cycles, and its why, cycles and their why, asm), and what the
+/// why codes mean
 fn insn_table(stmts: &[&StmtFacts]) -> String {
     let insns: Vec<_> = stmts.iter().flat_map(|s| &s.insns).collect();
     let mut rows = vec![];
     if stmts.iter().any(|s| s.elided) {
-        rows.push("-    elided: a move to the same register".to_string());
+        rows.push("--     elided: a move to the same register".to_string());
     }
     for i in &insns {
         let sw = i.size_why.unwrap_or(' ');
         rows.push(format!(
             "{} {sw} {:>5} {:<3} {}",
-            i.size, i.cyc, i.cyc_why, i.asm
+            i.size * 8,
+            i.cyc,
+            i.cyc_why,
+            i.asm
         ));
     }
     let mut out = format!("```text\n{}\n```", rows.join("\n"));

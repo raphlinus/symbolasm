@@ -289,6 +289,8 @@ impl<'a> IrCtx<'a> {
                         ty: static_ty,
                         body,
                     });
+                } else if let Some(why) = self.regmap.lost(id) {
+                    return Err(format!("{id} is no longer in a register: {why}"))?;
                 } else {
                     return Err(format!("variable {id} not found"))?;
                 };

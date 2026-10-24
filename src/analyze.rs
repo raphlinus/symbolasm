@@ -91,8 +91,11 @@ cycle why, shown only when a cycle is lost:
   L  load-use: a source is the previous load's result
   R  result-use: a source is the previous multiply, divide or complex op's result
   S  a complex op (rotated immediate, shift not lsl #0-3) or muls that sets flags
-  U  the branch target (for bl, the return site) is 32 bit and not word aligned
-  F  the branch isn't folded with the previous instruction
+  U  the branch target (for bl, the callee) is 32 bit and not word aligned
+  u  the branch target is 32 bit; its alignment isn't known
+  B  bl's return site is 32 bit and not word aligned
+  b  bl's return site is 32 bit; its alignment isn't known
+  F  the branch, nop or IT isn't folded with the previous instruction
   K  folded, but the previous instruction sets flags, so taken still costs
   ?  the model isn't sure
 cycles for a conditional branch are not-taken/taken; - in size is an elided statement
@@ -165,11 +168,19 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
     let mut labels: HashMap<String, usize> = HashMap::new();
     let mut pending_labels: Vec<String> = vec![];
     let mut cur_fn: Option<usize> = None;
+    // Whether each function starts word aligned: after a .balign of 4 or
+    // more in its section, so its targets' alignment doesn't depend on the
+    // code before it
+    let mut fn_aligned = vec![false; fns.len()];
+    let mut balign = false;
     for (ix, line) in lines.iter().enumerate() {
         if line.starts_with(".section") {
             // Labels at the very end of a section don't name an instruction.
             pending_labels.clear();
             cur_fn = None;
+            balign = false;
+        } else if let Some(n) = line.strip_prefix(".balign ") {
+            balign = n.trim().parse::<u32>().is_ok_and(|n| n % 4 == 0);
         } else if let Some(rest) = line.strip_prefix("@sy ") {
             let mut parts = rest.split_whitespace();
             let offset = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -186,6 +197,7 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
             if !label.starts_with(' ') {
                 if let Some(&f) = fn_index.get(label) {
                     cur_fn = Some(f);
+                    fn_aligned[f] = balign;
                 }
                 pending_labels.push(label.to_owned());
             }
@@ -252,7 +264,7 @@ fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
         }
     }
 
-    model(&mut insns, &labels);
+    model(&mut insns, &labels, &fn_aligned);
     for insn in &mut insns {
         insn.size_why = size_why(insn);
     }
@@ -912,7 +924,7 @@ struct Prev {
     sets_flags: bool,
 }
 
-fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
+fn model(insns: &mut [Insn], labels: &HashMap<String, usize>, fn_aligned: &[bool]) {
     let mut prev: Option<Prev> = None;
     let mut late: Vec<u8> = vec![];
     let mut late_is_load = false;
@@ -921,17 +933,23 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             prev = None;
             late.clear();
         }
-        let next_32 = insns
+        // The cost of a branch target, by its why code: U if it's 32 bit
+        // and not word aligned, or in a function whose alignment isn't
+        // known, u if it's 32 bit
+        let target_why = |t: usize| -> Option<char> {
+            let t = insns.get(t).filter(|t| t.size() == 4)?;
+            match fn_aligned[t.func] {
+                true if t.addr % 4 == 0 => None,
+                true => Some('U'),
+                false => Some('u'),
+            }
+        };
+        let ret_u = insns
             .get(i + 1)
             .filter(|n| n.func == insns[i].func)
-            .map(|n| (n.size() == 4, n.addr % 4 != 0));
-        // U for a branch to `label`: target 32 bit and not word aligned
-        let u_for = |sym: Option<&str>| -> bool {
-            let Some(&t) = sym.and_then(|s| labels.get(s)) else {
-                return false;
-            };
-            insns[t].size() == 4 && insns[t].addr % 4 != 0
-        };
+            .and_then(|_| target_why(i + 1));
+        let u_for =
+            |sym: Option<&str>| sym.and_then(|s| labels.get(s)).and_then(|&t| target_why(t));
         let insn = &insns[i];
         let e = effects(insn);
         let mut why = String::new();
@@ -984,6 +1002,9 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             "it" => {
                 let (f, unsure) = fold(&prev);
                 folded = f;
+                if !f {
+                    why.push('F');
+                }
                 if unsure {
                     why.push('?');
                 }
@@ -995,6 +1016,9 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             "nop" => {
                 let (f, unsure) = fold(&prev);
                 folded = f;
+                if !f {
+                    why.push('F');
+                }
                 if unsure {
                     why.push('?');
                 }
@@ -1003,11 +1027,9 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             "b" | "bx" if base == "b" || reg_at(&insn.ops, 0) == Some(14) => {
                 let (f, unsure) = fold(&prev);
                 let k = !(cond && prev.is_some_and(|p| p.sets_flags));
-                let u = base == "b" && u_for(sym);
-                let taken = extra + 2 + u as i32 - (k && f) as i32;
-                if u {
-                    why.push('U');
-                }
+                let u = if base == "b" { u_for(sym) } else { None };
+                let taken = extra + 2 + u.is_some() as i32 - (k && f) as i32;
+                why.extend(u);
                 if !f {
                     why.push('F');
                 } else if !k {
@@ -1029,20 +1051,20 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
                 format!("{}", extra + 2)
             }
             "bl" | "blx" => {
-                let u = base == "bl" && u_for(sym);
-                let ret_u = next_32 == Some((true, true));
-                if u || ret_u {
-                    why.push('U');
-                }
+                let u = if base == "bl" { u_for(sym) } else { None };
+                why.extend(u);
+                // The return pays for its site, but it's this call's
+                why.extend(ret_u.map(|c| if c == 'U' { 'B' } else { 'b' }));
                 after_uncond = true;
-                format!("{}", extra + 2 + u as i32 + ret_u as i32)
+                format!(
+                    "{}",
+                    extra + 2 + u.is_some() as i32 + ret_u.is_some() as i32
+                )
             }
             "cbz" | "cbnz" => {
                 let u = u_for(sym);
-                if u {
-                    why.push('U');
-                }
-                format!("{}/{}", extra + 1, extra + 2 + u as i32)
+                why.extend(u);
+                format!("{}/{}", extra + 1, extra + 2 + u.is_some() as i32)
             }
             "pop"
                 if insn
