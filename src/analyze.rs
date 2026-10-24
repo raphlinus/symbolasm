@@ -10,8 +10,8 @@
 //! address order, as if it were straight-line code: the instruction before a
 //! branch target is taken to be the one before it in memory.
 //!
-//! This is a first draft. Cases the datasheet doesn't settle are guesses,
-//! to be checked against DWT measurements.
+//! Cases the datasheet doesn't settle have been checked against DWT
+//! measurements, as have most that it does.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -90,7 +90,7 @@ size why, when a 16 bit encoding was one change away:
 cycle why, shown only when a cycle is lost:
   L  load-use: a source is the previous load's result
   R  result-use: a source is the previous multiply, divide or complex op's result
-  S  a complex op (rotated immediate, shift not lsl #0-3) that sets flags
+  S  a complex op (rotated immediate, shift not lsl #0-3) or muls that sets flags
   U  the branch target (for bl, the return site) is 32 bit and not word aligned
   F  the branch isn't folded with the previous instruction
   K  folded, but the previous instruction sets flags, so taken still costs
@@ -697,7 +697,13 @@ fn effects(insn: &Insn) -> Effects {
                 .any(|o| matches!(o, Op::Sym(s) if s.starts_with('=')));
             // `ldr rd, =n` can come out as a mov
             if !literal || is_ldr_literal(&insn.hw) {
-                e.late = lead.into_iter().filter(|&r| r != 15).collect();
+                // Of ldrd's two, only the second is late, as with ldm.
+                e.late = lead
+                    .last()
+                    .copied()
+                    .filter(|&r| r != 15)
+                    .into_iter()
+                    .collect();
                 e.late_is_load = true;
             }
         }
@@ -717,18 +723,23 @@ fn effects(insn: &Insn) -> Effects {
                 reg_at(ops, 0).into_iter().collect()
             };
         }
-        "mla" | "mls" => {
+        _ if multiply(&insn.hw) == Some(false) => {
+            // mul, mla, smulbb, smlad, usad8 and co.: Ra, if any, is the
+            // accumulator
             e.srcs = all[1..].to_vec();
             e.accum = all.get(3).copied().into_iter().collect();
             e.late = all[..1].to_vec();
         }
-        "umlal" | "smlal" => {
-            e.srcs = all.clone();
-            e.accum = all[..2].to_vec();
-            e.late = all[..2].to_vec();
-        }
-        "umull" | "smull" => {
-            e.srcs = all[2..].to_vec();
+        _ if multiply(&insn.hw) == Some(true) => {
+            // umull, smlal, umaal and co.: the accumulating ones read both
+            // results
+            let accum = (insn.hw[0] >> 4) & 7 >= 4;
+            if accum {
+                e.srcs = all.clone();
+                e.accum = all[..2].to_vec();
+            } else {
+                e.srcs = all[2..].to_vec();
+            }
             e.late = all[..2].to_vec();
         }
         "mrc" | "mrrc" => (),
@@ -744,6 +755,10 @@ fn effects(insn: &Insn) -> Effects {
             };
             if matches!(b, "mul" | "udiv" | "sdiv") {
                 e.late = all[..1].to_vec();
+            }
+            // 16 bit muls takes two cycles, like a complex op with S
+            if b == "mul" && insn.s {
+                e.complex = true;
             }
             if is_complex(&insn.hw) {
                 e.complex = true;
@@ -780,8 +795,41 @@ fn is_complex(hw: &[u16]) -> bool {
         let ty = (b >> 4) & 3;
         return !mov && !(ty == 0 && amount <= 3);
     }
-    // sel
-    a & 0xfff0 == 0xfaa0 && b & 0xf0f0 == 0xf080
+    // ssat16 and usat16
+    if a & 0xff70 == 0xf320 && b & 0xf0c0 == 0 {
+        return true;
+    }
+    // Data processing, register. Not in the datasheet's list, but measured:
+    // an extend-and-add (uxtab and co., a rotation then an add, like a
+    // shifted operand), the parallel adds and subtracts, and qadd and co.
+    // Plain extends, register shifts, rev, rbit and clz aren't complex.
+    if a & 0xff00 == 0xfa00 && b & 0xf000 == 0xf000 {
+        let op1 = (a >> 4) & 0xf;
+        let op2 = (b >> 4) & 0xf;
+        return if op1 < 8 {
+            op2 & 8 != 0 && a & 0xf != 0xf
+        } else if op2 & 8 == 0 {
+            true
+        } else {
+            // qadd family, rev family, sel, clz
+            matches!(op1 & 3, 0 | 2)
+        };
+    }
+    false
+}
+
+/// A 32 bit multiply, decoded from the encoding: Some(false) for the ones
+/// with one result (mul, mla, smulbb, smlad, smmul, usad8 and co.),
+/// Some(true) for the long ones (umull, smlal, umaal and co.). Not divides.
+fn multiply(hw: &[u16]) -> Option<bool> {
+    let [a, _] = hw else { return None };
+    if a & 0xff80 == 0xfb00 {
+        Some(false)
+    } else if a & 0xff80 == 0xfb80 && (a >> 4) & 5 != 1 {
+        Some(true)
+    } else {
+        None
+    }
 }
 
 fn sets_flags(insn: &Insn) -> bool {
@@ -795,35 +843,28 @@ struct Prev {
     aligned: bool,
     target: bool,
     folded: bool,
-    /// Folded with an IT; whether that stops a fold with the next
-    /// instruction is a guess.
-    it_folded: bool,
     sets_flags: bool,
-    push_pop: bool,
 }
 
 fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
     let mut prev: Option<Prev> = None;
     let mut late: Vec<u8> = vec![];
     let mut late_is_load = false;
-    // An IT followed by a 16 bit instruction is folded into it.
-    let mut it_folded = false;
     for i in 0..insns.len() {
         if i > 0 && insns[i - 1].func != insns[i].func {
             prev = None;
             late.clear();
-            it_folded = false;
         }
         let next_32 = insns
             .get(i + 1)
             .filter(|n| n.func == insns[i].func)
             .map(|n| (n.size() == 4, n.addr % 4 != 0));
         // U for a branch to `label`: target 32 bit and not word aligned
-        let u_for = |sym: Option<&str>, prev: &Option<Prev>| -> bool {
+        let u_for = |sym: Option<&str>| -> bool {
             let Some(&t) = sym.and_then(|s| labels.get(s)) else {
                 return false;
             };
-            insns[t].size() == 4 && insns[t].addr % 4 != 0 && !prev.is_some_and(|p| p.push_pop)
+            insns[t].size() == 4 && insns[t].addr % 4 != 0
         };
         let insn = &insns[i];
         let e = effects(insn);
@@ -841,21 +882,28 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
         }
         let mut next_late = e.late.clone();
         let mut next_late_is_load = e.late_is_load;
+        let base = insn.base.as_str();
         if e.complex && sets_flags(insn) {
             // Paid here whatever comes next, so nothing is left for the
-            // next instruction to wait on (a guess).
+            // next instruction to wait on (measured).
             extra += 1;
             why.push('S');
             next_late.clear();
         }
-        // F: folded with the previous instruction; the bool is "unsure"
+        // F: folded with the previous instruction (a nop, IT or branch
+        // folds with a 16 bit one that isn't folded itself); the bool is
+        // "unsure"
         let fold = |prev: &Option<Prev>| -> (bool, bool) {
             match prev {
                 None => (false, true),
-                Some(p) if p.size != 2 => (false, false),
-                Some(p) if p.folded => (false, p.it_folded),
-                // Folds when it falls through, not when branched to
-                Some(p) if p.target && !p.aligned => (true, true),
+                Some(p) if p.size != 2 || p.folded => (false, false),
+                // A branch doesn't fold with an unaligned branch target; an
+                // IT does; a nop hasn't been measured.
+                Some(p) if p.target && !p.aligned => match base {
+                    "it" => (true, false),
+                    "nop" => (true, true),
+                    _ => (false, false),
+                },
                 Some(_) => (true, false),
             }
         };
@@ -864,22 +912,19 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             _ => None,
         });
         let cond = insn.cond.is_some();
-        let base = insn.base.as_str();
         let mut folded = false;
-        let mut it_fold = false;
         let mut after_uncond = false;
         let cyc = match base {
             "it" => {
-                let n = if next_32.is_some_and(|(w, _)| !w) {
-                    0
-                } else {
-                    1
-                };
-                it_folded = n == 0;
+                let (f, unsure) = fold(&prev);
+                folded = f;
+                if unsure {
+                    why.push('?');
+                }
                 // Keep the late results of the instruction before the IT.
                 next_late = late.clone();
                 next_late_is_load = late_is_load;
-                format!("{n}")
+                format!("{}", 1 - f as i32)
             }
             "nop" => {
                 let (f, unsure) = fold(&prev);
@@ -892,7 +937,7 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             "b" | "bx" if base == "b" || reg_at(&insn.ops, 0) == Some(14) => {
                 let (f, unsure) = fold(&prev);
                 let k = !(cond && prev.is_some_and(|p| p.sets_flags));
-                let u = base == "b" && u_for(sym, &prev);
+                let u = base == "b" && u_for(sym);
                 let taken = extra + 2 + u as i32 - (k && f) as i32;
                 if u {
                     why.push('U');
@@ -918,7 +963,7 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
                 format!("{}", extra + 2)
             }
             "bl" | "blx" => {
-                let u = base == "bl" && u_for(sym, &prev);
+                let u = base == "bl" && u_for(sym);
                 let ret_u = next_32 == Some((true, true));
                 if u || ret_u {
                     why.push('U');
@@ -927,7 +972,7 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
                 format!("{}", extra + 2 + u as i32 + ret_u as i32)
             }
             "cbz" | "cbnz" => {
-                let u = u_for(sym, &prev);
+                let u = u_for(sym);
                 if u {
                     why.push('U');
                 }
@@ -955,18 +1000,12 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>) {
             "ldrd" | "strd" => format!("{}", extra + 2),
             _ => format!("{}", extra + 1),
         };
-        if base != "it" && std::mem::take(&mut it_folded) {
-            folded = true;
-            it_fold = true;
-        }
         let this = Prev {
             size: insn.size(),
             aligned: insn.addr % 4 == 0,
             target: insn.target,
             folded,
-            it_folded: it_fold,
             sets_flags: sets_flags(insn),
-            push_pop: matches!(base, "push" | "pop"),
         };
         if after_uncond {
             prev = None;
