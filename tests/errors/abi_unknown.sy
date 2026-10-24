@@ -1,0 +1,4 @@
+// error: the abis are aapcs, loose and wild
+fn[abi = chaos] f() {
+    bx lr
+}

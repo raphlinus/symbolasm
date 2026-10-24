@@ -5,7 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{svd::Peripherals, types::TypeHandle};
+use crate::{
+    svd::Peripherals,
+    types::{TypeHandle, TypePool},
+};
 
 #[derive(Default)]
 pub struct Globals {
@@ -16,8 +19,8 @@ pub struct Globals {
     pub statics: HashMap<String, TypeHandle>,
     /// The statics declared without `mut`.
     pub immutable: HashSet<String>,
-    /// Functions defined in this file.
-    pub fns: HashSet<String>,
+    /// Functions defined in the program, with their types
+    pub fns: HashMap<String, TypeHandle>,
 }
 
 impl Globals {
@@ -33,7 +36,16 @@ impl Globals {
     pub fn is_defined(&self, name: &str) -> bool {
         self.statics.contains_key(name)
             || self.symbols.contains_key(name)
-            || self.fns.contains(name)
+            || self.fns.contains_key(name)
+    }
+
+    /// The type of a function that can be called by name: one defined in
+    /// the program, or a symbol with a function type
+    pub fn fn_ty(&self, name: &str, types: &TypePool) -> Option<TypeHandle> {
+        self.fns
+            .get(name)
+            .copied()
+            .or_else(|| self.symbol_ty(name).filter(|t| types.sig(*t).is_some()))
     }
 
     pub fn symbol_ty(&self, name: &str) -> Option<TypeHandle> {

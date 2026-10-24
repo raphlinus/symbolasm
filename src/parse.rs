@@ -4,6 +4,7 @@
 //! Parsing
 
 use crate::{
+    abi::Abi,
     error::{Error, WithLoc},
     lex::{Loc, TokBody, TokBuf, Token},
     precedence::Precedence,
@@ -72,7 +73,11 @@ pub struct Function {
     pub link_section: Option<String>,
     /// Alignment of the function's start from `#[align = n]`
     pub align: Option<u32>,
+    /// From `fn[abi = name]`
+    pub abi: Abi,
     pub args: Args,
+    /// The named results after `->`, placed from r0 up
+    pub rets: Args,
     pub body: Vec<Stmt>,
     /// Location of the first token of each statement, parallel to `body`.
     pub locs: Vec<Loc>,
@@ -93,6 +98,17 @@ pub enum Type {
     Ptr(Box<Type>),
     /// `[T; n]`, where n is a constant expression
     Array(Box<Type>, Box<Expr>),
+    /// `fn[abi = name](args) -> rets`, the address of a function
+    Fn(Box<FnType>),
+}
+
+/// A function's signature, as written in a type. Argument and result names
+/// are optional, and don't affect the type.
+#[derive(Clone, Debug)]
+pub struct FnType {
+    pub abi: Abi,
+    pub args: Vec<Type>,
+    pub rets: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,21 +243,100 @@ fn parse_attr(toks: &mut TokBuf, attrs: &mut Attrs) -> Result<(), Error> {
 
 // Note: "fn" keyword has already been consumed
 fn parse_function(toks: &mut TokBuf) -> Result<Function, Error> {
+    let abi = parse_abi(toks)?;
     let name = toks.next().ok_or("expected function name")?;
     if !name.is_ident() {
         Err("function name must be identifier")?
     }
     let name = name.clone();
     let args = parse_args(toks).at(&name.loc)?;
+    let rets = parse_rets(toks).at(&name.loc)?;
     let (body, locs) = parse_body(toks, name.as_ident().unwrap())?;
     Ok(Function {
         name,
         link_section: None,
         align: None,
+        abi,
         args,
+        rets,
         body,
         locs,
     })
+}
+
+/// `[abi = name]` after `fn`, if present. Note: "fn" has been consumed.
+fn parse_abi(toks: &mut TokBuf) -> Result<Abi, Error> {
+    if !toks.expect_opt(&TokBody::OpenBracket) {
+        return Ok(Abi::default());
+    }
+    let key = toks.next().ok_or("expected abi")?;
+    if !key.match_str("abi") {
+        Err("expected abi = name in fn[...]")?;
+    }
+    toks.expect(&TokBody::Equals)?;
+    let name = toks.next().ok_or("expected an abi name")?;
+    let abi = name
+        .as_ident()
+        .and_then(Abi::from_name)
+        .ok_or("the abis are aapcs, loose and wild")?;
+    toks.expect(&TokBody::CloseBracket)?;
+    Ok(abi)
+}
+
+/// `-> x`, `-> x: T` or `-> (a, b: T)`, if present
+fn parse_rets(toks: &mut TokBuf) -> Result<Args, Error> {
+    if !toks.expect_opt(&TokBody::Arrow) {
+        return Ok(Args(vec![]));
+    }
+    if toks.peek().map(|t| &t.tok) == Some(&TokBody::OpenParen) {
+        parse_args(toks)
+    } else {
+        Ok(Args(vec![parse_arg(toks)?]))
+    }
+}
+
+/// An argument or result in a function type: `name: T`, a type, or a bare
+/// name, which has the default type unless it names a primitive type
+fn parse_sig_type(toks: &mut TokBuf) -> Result<Type, Error> {
+    if let Some(tok) = toks.peek()
+        && tok.is_ident()
+        && !tok.match_str("fn")
+    {
+        let tok = tok.clone();
+        toks.next();
+        if toks.expect_opt(&TokBody::Colon) {
+            return parse_type(toks);
+        }
+        let is_prim = ["u32", "u16", "u8", "i32", "i16", "i8"]
+            .iter()
+            .any(|p| tok.match_str(p));
+        if is_prim {
+            return Ok(Type::Ident(tok));
+        }
+        // A name without a type
+        let default = Token {
+            loc: tok.loc,
+            tok: TokBody::Identifier("u32".into()),
+        };
+        return Ok(Type::Ident(default));
+    }
+    parse_type(toks)
+}
+
+/// `(a, b)` in a function type. Note: "(" has been consumed.
+fn parse_sig_list(toks: &mut TokBuf) -> Result<Vec<Type>, Error> {
+    let mut list = vec![];
+    while !toks.expect_opt(&TokBody::CloseParen) {
+        list.push(parse_sig_type(toks)?);
+        if toks.expect_opt(&TokBody::Comma) {
+            continue;
+        } else if toks.expect_opt(&TokBody::CloseParen) {
+            break;
+        } else {
+            Err("syntax error in function type")?;
+        }
+    }
+    Ok(list)
 }
 
 fn parse_args(toks: &mut TokBuf) -> Result<Args, Error> {
@@ -277,6 +372,19 @@ fn parse_arg(toks: &mut TokBuf) -> Result<Arg, Error> {
 fn parse_type(toks: &mut TokBuf) -> Result<Type, Error> {
     let first = toks.next().ok_or("expected type")?;
     match &first.tok {
+        TokBody::Identifier(_) if first.match_str("fn") => {
+            let abi = parse_abi(toks)?;
+            toks.expect(&TokBody::OpenParen)?;
+            let args = parse_sig_list(toks)?;
+            let rets = if !toks.expect_opt(&TokBody::Arrow) {
+                vec![]
+            } else if toks.expect_opt(&TokBody::OpenParen) {
+                parse_sig_list(toks)?
+            } else {
+                vec![parse_sig_type(toks)?]
+            };
+            Ok(Type::Fn(Box::new(FnType { abi, args, rets })))
+        }
         TokBody::Identifier(_) => Ok(Type::Ident(first.clone())),
         TokBody::Asterisk => {
             let expr = parse_type(toks)?;

@@ -46,6 +46,8 @@ pub enum TokBody {
     MinusEquals,
     PlusPlus,
     MinusMinus,
+    /// `->`, before a function's return values
+    Arrow,
     AsteriskEquals,
     AmpersandEquals,
     PipeEquals,
@@ -144,6 +146,9 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                     len += 1;
                 } else if src.as_bytes().get(ix + 1) == Some(&b'-') {
                     tokens.push(Token::new(loc, TokBody::MinusMinus));
+                    len += 1;
+                } else if src.as_bytes().get(ix + 1) == Some(&b'>') {
+                    tokens.push(Token::new(loc, TokBody::Arrow));
                     len += 1;
                 } else {
                     tokens.push(Token::new(loc, TokBody::Minus));

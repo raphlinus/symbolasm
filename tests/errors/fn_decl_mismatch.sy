@@ -1,0 +1,6 @@
+// error: divmod is fn[abi = loose](u32, u32) -> (u32, u32) here, but fn(u32, u32) -> (u32, u32) elsewhere
+symbol divmod: fn(u32, u32) -> (u32, u32)
+
+fn[abi = loose] divmod(n, d) -> (q, r) {
+    bx lr
+}

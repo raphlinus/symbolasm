@@ -1,0 +1,8 @@
+// error: f is already defined
+fn f() {
+    bx lr
+}
+
+fn f() {
+    bx lr
+}

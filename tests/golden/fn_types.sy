@@ -1,0 +1,30 @@
+// Function types, ABIs and declarations
+
+struct Vtable {
+    render: fn[abi = loose](obj: *Vtable, y) -> done
+    start: fn(*u8)
+}
+
+// A declaration may come before or after the definition, if they match
+symbol divmod: fn[abi = loose](u32, u32) -> (u32, u32)
+
+fn[abi = loose] divmod(n, d) -> (q, r) {
+    bx lr
+}
+
+symbol divmod: fn[abi = loose](n: u32, d) -> (q, r: u32)
+
+fn render(obj: *Vtable, y) -> done {
+    bx lr
+}
+
+static vt = Vtable {
+    render: render,
+    start: 0,
+}
+
+fn addrs(v: *Vtable) {
+    f @r1 = divmod
+    g @r2 = v.render
+    bx lr
+}

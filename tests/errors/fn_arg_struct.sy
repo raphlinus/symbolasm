@@ -1,0 +1,7 @@
+// error: arguments must fit in a register, not Point
+struct Point {
+    x: u32
+    y: u32
+}
+
+symbol f: fn(p: Point)

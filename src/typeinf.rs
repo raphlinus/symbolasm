@@ -110,6 +110,7 @@ impl<'a> TypeInferCtx<'a> {
                     .get(id)
                     .cloned()
                     .or_else(|| self.globals.symbol_ty(id))
+                    .or_else(|| self.globals.fns.get(id).copied())
                     .or_else(|| {
                         self.globals
                             .static_ty(id)

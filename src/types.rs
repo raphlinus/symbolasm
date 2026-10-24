@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use crate::error::{Error, WithLoc};
+use crate::{
+    abi::Abi,
+    error::{Error, WithLoc},
+};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TypeHandle(usize);
@@ -13,6 +16,18 @@ pub struct StructHandle(usize);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TupleHandle(usize);
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FnHandle(usize);
+
+/// A function's signature. Default types are stored as u32, so that a
+/// declaration with a type and a definition without one match.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct FnSig {
+    pub abi: Abi,
+    pub args: Vec<TypeHandle>,
+    pub rets: Vec<TypeHandle>,
+}
 
 #[derive(Default)]
 pub struct TypePool {
@@ -24,6 +39,8 @@ pub struct TypePool {
     structs: Vec<StructLayout>,
     tuples: Vec<Vec<TypeHandle>>,
     tuple_inv: HashMap<Vec<TypeHandle>, TupleHandle>,
+    sigs: Vec<FnSig>,
+    sig_inv: HashMap<FnSig, FnHandle>,
     /// Values of `const` items. They live here because array lengths in
     /// types can refer to them.
     consts: HashMap<String, u32>,
@@ -44,6 +61,8 @@ pub enum Type {
     Tuple(TupleHandle),
     /// Element type and count
     Array(TypeHandle, u32),
+    /// The address of a function with this signature
+    Fn(FnHandle),
 }
 
 #[derive(Clone, Copy)]
@@ -101,6 +120,23 @@ impl TypePool {
                 format!("({})", els.join(", "))
             }
             Type::Array(t, n) => format!("[{}; {n}]", self.display(*t)),
+            Type::Fn(f) => {
+                let sig = &self.sigs[f.0];
+                let list = |tys: &[TypeHandle]| -> String {
+                    let els: Vec<String> = tys.iter().map(|t| self.display(*t)).collect();
+                    els.join(", ")
+                };
+                let abi = match sig.abi {
+                    Abi::Aapcs => String::new(),
+                    abi => format!("[abi = {}]", abi.name()),
+                };
+                let rets = match sig.rets.len() {
+                    0 => String::new(),
+                    1 => format!(" -> {}", list(&sig.rets)),
+                    _ => format!(" -> ({})", list(&sig.rets)),
+                };
+                format!("fn{abi}({}){rets}", list(&sig.args))
+            }
         }
     }
 
@@ -142,6 +178,70 @@ impl TypePool {
                 let count = crate::consts::eval(count, self, &HashMap::new())?;
                 Ok(self.get_handle(&Type::Array(elem, count)))
             }
+            crate::parse::Type::Fn(f) => {
+                let args = f
+                    .args
+                    .iter()
+                    .map(|t| self.intern_from_ast(t))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let rets = f
+                    .rets
+                    .iter()
+                    .map(|t| self.intern_from_ast(t))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.intern_fn(f.abi, args, rets)
+            }
+        }
+    }
+
+    /// The type of a function's address, given its signature. Arguments
+    /// and results must fit in a register.
+    pub fn intern_fn(
+        &mut self,
+        abi: Abi,
+        args: Vec<TypeHandle>,
+        rets: Vec<TypeHandle>,
+    ) -> Result<TypeHandle, Error> {
+        let u32_ty = self.get_handle(&Type::U32);
+        let norm = |tys: Vec<TypeHandle>, what: &str| -> Result<Vec<TypeHandle>, Error> {
+            tys.into_iter()
+                .map(|t| match self.get(t) {
+                    Type::Default => Ok(u32_ty),
+                    Type::Struct(_) | Type::Tuple(_) | Type::Array(..) => Err(format!(
+                        "{what} must fit in a register, not {}",
+                        self.display(t)
+                    )
+                    .into()),
+                    _ => Ok(t),
+                })
+                .collect()
+        };
+        let args = norm(args, "arguments")?;
+        let rets = norm(rets, "results")?;
+        if rets.len() > abi.n_regs() {
+            Err(format!(
+                "a {} function returns at most {} results",
+                abi.name(),
+                abi.n_regs()
+            ))?;
+        }
+        let sig = FnSig { abi, args, rets };
+        let handle = if let Some(h) = self.sig_inv.get(&sig) {
+            *h
+        } else {
+            let h = FnHandle(self.sigs.len());
+            self.sigs.push(sig.clone());
+            self.sig_inv.insert(sig, h);
+            h
+        };
+        Ok(self.get_handle(&Type::Fn(handle)))
+    }
+
+    /// The signature of a function type, if it is one
+    pub fn sig(&self, ty: TypeHandle) -> Option<&FnSig> {
+        match self.get(ty) {
+            Type::Fn(f) => Some(&self.sigs[f.0]),
+            _ => None,
         }
     }
 
@@ -253,6 +353,7 @@ impl TypePool {
             Type::I16 => TypeInfo::new(2, 2),
             Type::I8 => TypeInfo::new(1, 1),
             Type::Ptr(_type_handle) => TypeInfo::new(4, 4),
+            Type::Fn(_) => TypeInfo::new(4, 4),
             // This will get filled in later (in `populate_struct`)
             Type::Struct(_) => TypeInfo::new(0, 0),
             Type::Tuple(_) => TypeInfo::new(0, 0),

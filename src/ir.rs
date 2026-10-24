@@ -257,7 +257,8 @@ impl<'a> IrCtx<'a> {
                 } else if let Some(n) = self.types.const_value(id) {
                     let body = Body::Imm(n);
                     return Ok(Expr { ty, body });
-                } else if self.globals.symbol_ty(id).is_some() {
+                } else if self.globals.symbol_ty(id).is_some() || self.globals.fns.contains_key(id)
+                {
                     let body = Body::Sym(id.to_owned());
                     return Ok(Expr { ty, body });
                 } else if let Some(static_ty) = self.globals.static_ty(id) {
@@ -570,6 +571,8 @@ impl<'a> IrCtx<'a> {
             Some(ty)
         } else if let Some(ty) = self.globals.symbol_ty(id) {
             Some(ty)
+        } else if let Some(ty) = self.globals.fns.get(id) {
+            Some(*ty)
         } else {
             Some(TypeHandle::default())
         }

@@ -170,7 +170,7 @@ fn emit_init(
 
 fn scalar_directive(ty: &Type) -> Option<&'static str> {
     match ty {
-        Type::U32 | Type::I32 | Type::Default | Type::Ptr(_) => Some(".word"),
+        Type::U32 | Type::I32 | Type::Default | Type::Ptr(_) | Type::Fn(_) => Some(".word"),
         Type::U16 | Type::I16 => Some(".hword"),
         Type::U8 | Type::I8 => Some(".byte"),
         _ => None,
@@ -225,7 +225,7 @@ fn address_name(e: &Expr, globals: &Globals) -> Option<String> {
     match e {
         Expr::Ident(id) => id
             .as_ident()
-            .filter(|id| globals.symbol_ty(id).is_some() || globals.fns.contains(*id))
+            .filter(|id| globals.symbol_ty(id).is_some() || globals.fns.contains_key(*id))
             .map(str::to_owned),
         Expr::Unary(op, inner) if op.tok == crate::lex::TokBody::Ampersand => inner
             .as_ident()

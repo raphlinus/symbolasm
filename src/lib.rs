@@ -15,6 +15,7 @@ use crate::{
     types::TypePool,
 };
 
+mod abi;
 pub mod analyze;
 mod bitset;
 mod compile;
@@ -84,6 +85,39 @@ impl Source {
     }
 }
 
+/// The type of a function definition's address
+fn fn_type(f: &parse::Function, types: &mut TypePool) -> Result<types::TypeHandle, Error> {
+    let mut list = |args: &parse::Args| -> Result<Vec<types::TypeHandle>, Error> {
+        args.0
+            .iter()
+            .map(|a| match &a.ty {
+                Some(t) => types.intern_from_ast(t),
+                None => Ok(types.get_handle(&types::Type::U32)),
+            })
+            .collect()
+    };
+    let args = list(&f.args)?;
+    let rets = list(&f.rets)?;
+    types.intern_fn(f.abi, args, rets)
+}
+
+/// A function's declaration and definition must have the same type
+fn check_same_fn(
+    name: &str,
+    ty: types::TypeHandle,
+    other: types::TypeHandle,
+    types: &TypePool,
+) -> Result<(), Error> {
+    if ty != other {
+        Err(format!(
+            "{name} is {} here, but {} elsewhere",
+            types.display(ty),
+            types.display(other)
+        ))?;
+    }
+    Ok(())
+}
+
 /// What compiling produces.
 pub struct Output {
     pub asm: Vec<u8>,
@@ -130,7 +164,12 @@ pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output
             parse::Item::Symbol(e) => {
                 let name = e.name.as_ident().unwrap();
                 let ty = types.intern_from_ast(&e.ty).at(&e.name.loc)?;
-                if globals.is_defined(name) || types.const_value(name).is_some() {
+                // A function may be declared as often as it's defined, as
+                // long as the types match
+                let other = globals.fn_ty(name, &types);
+                if types.sig(ty).is_some() && other.is_some() {
+                    check_same_fn(name, ty, other.unwrap(), &types).at(&e.name.loc)?;
+                } else if globals.is_defined(name) || types.const_value(name).is_some() {
                     return Err(format!("{name} is already defined").into()).at(&e.name.loc);
                 }
                 globals.symbols.insert(name.to_owned(), ty);
@@ -148,10 +187,16 @@ pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output
             }
             parse::Item::Function(f) => {
                 let name = f.name.as_ident().unwrap();
-                if globals.is_defined(name) || types.const_value(name).is_some() {
+                let ty = fn_type(f, &mut types).at(&f.name.loc)?;
+                if let Some(decl) = globals.symbol_ty(name)
+                    && types.sig(decl).is_some()
+                    && !globals.fns.contains_key(name)
+                {
+                    check_same_fn(name, ty, decl, &types).at(&f.name.loc)?;
+                } else if globals.is_defined(name) || types.const_value(name).is_some() {
                     return Err(format!("{name} is already defined").into()).at(&f.name.loc);
                 }
-                globals.fns.insert(name.to_owned());
+                globals.fns.insert(name.to_owned(), ty);
             }
         }
     }
