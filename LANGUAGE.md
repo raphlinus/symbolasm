@@ -239,8 +239,6 @@ There are still some gaps, for example `derivedFrom` is not yet supported. Named
 
 The `adc` and `sbc` instructions don't work (syntax in above table is provisional).
 
-The general form of `rsb` is not yet supported (for example, `5 - r0`). The special case of negation is.
-
 We will have syntax for placing variables on the stack, as well as fairly extensive analysis for stack balance, and that registers are properly restored as per ABI. For ABI, we will also have a choice between AAPCS and more relaxed forms.
 
 Function calls will gain proper types, and arguments and return value will be tracked, as opposed to the current implicit state where arguments are passed in r0..r3 (and on stack), and return value in r0.

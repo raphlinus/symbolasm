@@ -1,0 +1,10 @@
+// A constant or shifted register minus a register is rsb, with the
+// register first. 0 - x with flags dead is the 16 bit negs.
+fn rsb(a: u32, b: u32) {
+    c @r2 = 32 - a
+    c = 0x1000 - b
+    c = (b << 3) - a
+    a = 0 - a
+    #(c = 5 - b)
+    bx lr
+}

@@ -325,7 +325,16 @@ impl<'a, W: Write> GenCtx<'a, W> {
             Body::Binop(a, op, b) => {
                 let ty = self.types.get(a.ty);
                 let mut insn = insn_for_binop(*op, ty);
+                let mut a = a.deref();
                 let mut rhs = b.deref();
+                // c - x, or (y << n) - x, is rsb with x first
+                if *op == BinOp::Sub
+                    && !matches!(a.body, Body::Reg(_))
+                    && matches!(rhs.body, Body::Reg(_))
+                {
+                    insn = "rsb";
+                    std::mem::swap(&mut a, &mut rhs);
+                }
                 if let Body::Unary(UnaryOp::Not, b) = &rhs.body {
                     insn = match op {
                         BinOp::And => "bic",
@@ -347,7 +356,6 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 // The 16 bit flag-setting encodings: low registers, and for
                 // the logical ops and register shifts, rd the same as rn.
                 // A commutative op with rd the same as rm is swapped to fit.
-                let mut a = a.deref();
                 let rn = if let Body::Reg(r) = a.body { r } else { 0xff };
                 let commutative = matches!(insn, "and" | "orr" | "eor");
                 let low = lhs < 8 && rn < 8;
@@ -358,6 +366,8 @@ impl<'a, W: Write> GenCtx<'a, W> {
                         flags::NZCV
                     }
                     ("add" | "sub", Body::Reg(rm)) if low && *rm < 8 => flags::NZCV,
+                    // negs
+                    ("rsb", Body::Imm(0)) if low => flags::NZCV,
                     ("and" | "orr" | "eor" | "bic", Body::Reg(rm)) if low && *rm < 8 => {
                         if lhs == rn || (commutative && lhs == *rm) {
                             flags::NZ
