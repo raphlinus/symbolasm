@@ -1,0 +1,2 @@
+// error: use cycle:
+use "use/cycle_a.sy"

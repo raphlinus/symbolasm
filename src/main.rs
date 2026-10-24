@@ -26,6 +26,7 @@ mod globals;
 mod ifthen;
 mod ir;
 mod lex;
+mod load;
 mod parse;
 mod precedence;
 mod regmap;
@@ -36,14 +37,21 @@ mod types;
 
 #[derive(Parser)]
 struct Args {
-    /// Source files, compiled as one program, as if concatenated in order.
+    /// Source files, compiled as one program, as if concatenated in order,
+    /// each after the files it names with `use "file"`.
     #[arg(required = true)]
     paths: Vec<String>,
+
+    /// Read this file's text from stdin instead of from disk (for an
+    /// editor's unsaved buffer). Its uses still resolve from its path.
+    #[arg(long)]
+    stdin: Option<String>,
 
     #[arg(short, long)]
     svd: Option<String>,
 
-    /// Instead of asm, print a per-line size and cycle analysis.
+    /// Instead of asm, print a per-line size and cycle analysis of the
+    /// functions in the files named here, not those only reached by use.
     #[arg(long)]
     analyze: bool,
 
@@ -68,30 +76,47 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let mut src = String::new();
-    let mut files = vec![];
+    let mut loader = match load::Loader::new(args.stdin.as_deref()) {
+        Ok(loader) => loader,
+        Err(e) => {
+            e.report();
+            std::process::exit(1);
+        }
+    };
     for path in &args.paths {
-        match std::fs::read_to_string(path) {
-            Ok(text) => {
-                files.push((path.clone(), src.len()));
-                src.push_str(&text);
-                if !text.ends_with('\n') {
-                    src.push('\n');
-                }
-            }
-            Err(e) => {
-                eprintln!("error: reading {path}: {e}");
-                std::process::exit(1);
-            }
+        if let Err(e) = loader.load(path, None) {
+            e.report();
+            std::process::exit(1);
         }
     }
-    if let Err(err) = run(&args, &src, &files) {
+    let mut src = String::new();
+    let mut files = vec![];
+    // Byte ranges of the files named on the command line, the ones
+    // --analyze reports
+    let mut named = vec![];
+    for (path, text, is_named) in loader.files {
+        let start = src.len();
+        files.push((path, start));
+        src.push_str(&text);
+        if !text.ends_with('\n') {
+            src.push('\n');
+        }
+        if is_named {
+            named.push(start..src.len());
+        }
+    }
+    if let Err(err) = run(&args, &src, &files, &named) {
         report_error(&files, &src, &*err);
         std::process::exit(1);
     }
 }
 
-fn run(args: &Args, src: &str, files: &[(String, usize)]) -> Result<(), Error> {
+fn run(
+    args: &Args,
+    src: &str,
+    files: &[(String, usize)],
+    named: &[std::ops::Range<usize>],
+) -> Result<(), Error> {
     let mut tokens = tokenize(src)?;
     let program = parse_program(&mut tokens)?;
     let mut types = TypePool::new();
@@ -185,7 +210,7 @@ fn run(args: &Args, src: &str, files: &[(String, usize)]) -> Result<(), Error> {
             .collect::<Vec<_>>();
         let opts = analyze::Opts::parse(&args.size, &args.cols, args.func.clone(), args.legend)?;
         let asm = String::from_utf8(out)?;
-        analyze::analyze(&asm, src, files, &fns, &opts)?;
+        analyze::analyze(&asm, src, files, named, &fns, &opts)?;
     } else {
         std::io::stdout().write_all(&out)?;
     }

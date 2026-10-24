@@ -1,0 +1,3 @@
+use "point.sy"
+
+const ORIGIN_X = 0

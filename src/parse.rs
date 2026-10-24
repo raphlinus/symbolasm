@@ -173,8 +173,13 @@ pub fn parse_program(toks: &mut TokBuf) -> Result<Program, Error> {
         } else if tok.match_str("symbol") {
             let e = parse_symbol(toks).at(&loc)?;
             items.push(Item::Symbol(e));
+        } else if tok.match_str("use") {
+            // The loader has already followed it (see load.rs)
+            let Some(TokBody::Str(_)) = toks.next().map(|t| &t.tok) else {
+                return Err("expected a file name string after use".into()).at(&loc);
+            };
         } else {
-            return Err("expected fn, struct, static, const or symbol".into()).at(&loc);
+            return Err("expected fn, struct, static, const, symbol or use".into()).at(&loc);
         }
     }
     if let Some(attr_loc) = attrs.loc {

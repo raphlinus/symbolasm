@@ -148,6 +148,7 @@ pub fn analyze(
     asm: &str,
     src: &str,
     files: &[(String, usize)],
+    named: &[std::ops::Range<usize>],
     fns: &[(String, usize)],
     opts: &Opts,
 ) -> Result<(), Error> {
@@ -262,7 +263,10 @@ pub fn analyze(
     let lines = SrcLines::new(src, files);
     let mut first = true;
     for (f, (name, offset)) in fns.iter().enumerate() {
-        if opts.func.as_ref().is_some_and(|n| n != name) {
+        // Functions in files only reached by use aren't reported
+        if opts.func.as_ref().is_some_and(|n| n != name)
+            || !named.iter().any(|r| r.contains(offset))
+        {
             continue;
         }
         let fn_markers: Vec<&Marker> = markers.iter().filter(|m| m.func == f).collect();

@@ -235,6 +235,12 @@ The compiler has a command line option to import an [SVD] (System View Descripti
 
 There are still some gaps, for example `derivedFrom` is not yet supported. Named bitfield ranges and enums are also under consideration but not yet implemented.
 
+## Explicit dependencies
+
+Files can refer to items defined by other files, but need an explicit `use "otherfile.sy"` before they're used (usually at the top of the file). Among other things, this enables checking of a single file without needing a manifest.
+
+At the moment, calls don't need a `use`, as global targets are resolved by the linker. This will almost certainly change when we implement richer function types.
+
 ## Not yet implemented, but planned
 
 The `adc` and `sbc` instructions don't work (syntax in above table is provisional).

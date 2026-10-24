@@ -1,0 +1,9 @@
+// Files named with use come first, each once: point.sy, then origin.sy.
+use "use/point.sy"
+use "use/origin.sy"
+
+fn set_x(p: *Point) {
+    x @r1 = ORIGIN_X
+    p.x = x
+    bx lr
+}
