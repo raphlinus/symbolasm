@@ -168,6 +168,7 @@ impl FnScope {
         func: &Function,
         types: &mut TypePool,
         globals: &Globals,
+        markers: bool,
         w: &mut impl Write,
     ) -> Result<(), Error> {
         if let Some(name) = func.name.as_ident() {
@@ -215,6 +216,13 @@ impl FnScope {
             for ix in block.start..block.end {
                 let stmt = &func.body[ix];
                 let if_state = &if_analysis[ix];
+                // For --analyze, which maps asm lines back to statements.
+                // `a` marks a statement that lowers to IR, so one that
+                // emits nothing was elided.
+                if markers {
+                    let kind = if IrCtx::can_lower(stmt) { "a" } else { "o" };
+                    writeln!(w, "@sy {} {kind}", func.locs[ix].offset)?;
+                }
                 let result = if IrCtx::can_lower(stmt) {
                     let mut ir_ctx = IrCtx::new(&regmap, types, &typemap, globals);
                     ir_ctx.lower(stmt).and_then(|ir| {

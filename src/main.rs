@@ -14,6 +14,7 @@ use crate::{
     types::TypePool,
 };
 
+mod analyze;
 mod bitset;
 mod compile;
 mod consts;
@@ -41,6 +42,28 @@ struct Args {
 
     #[arg(short, long)]
     svd: Option<String>,
+
+    /// Instead of asm, print a per-line size and cycle analysis.
+    #[arg(long)]
+    analyze: bool,
+
+    /// With --analyze, only this function.
+    #[arg(long = "fn")]
+    func: Option<String>,
+
+    /// With --analyze, the size column: n (2 or 4), nib (first hex digit
+    /// of each halfword), or hex.
+    #[arg(long, default_value = "nib")]
+    size: String,
+
+    /// With --analyze, the columns to show, comma separated, from
+    /// line,size,szwhy,cycwhy,cyc,asm,src.
+    #[arg(long, default_value = "line,size,szwhy,cycwhy,cyc,asm,src")]
+    cols: String,
+
+    /// With --analyze, print the legend for the why columns first.
+    #[arg(long)]
+    legend: bool,
 }
 
 fn main() {
@@ -62,13 +85,13 @@ fn main() {
             }
         }
     }
-    if let Err(err) = run(&args, &src) {
+    if let Err(err) = run(&args, &src, &files) {
         report_error(&files, &src, &*err);
         std::process::exit(1);
     }
 }
 
-fn run(args: &Args, src: &str) -> Result<(), Error> {
+fn run(args: &Args, src: &str, files: &[(String, usize)]) -> Result<(), Error> {
     let mut tokens = tokenize(src)?;
     let program = parse_program(&mut tokens)?;
     let mut types = TypePool::new();
@@ -126,7 +149,8 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             }
         }
     }
-    let w = &mut std::io::stdout();
+    let mut out = Vec::new();
+    let w = &mut out;
     writeln!(w, ".cpu cortex-m33")?;
     writeln!(w, ".syntax unified")?;
     writeln!(w, ".thumb")?;
@@ -136,7 +160,7 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
             parse::Item::Function(func) => {
                 let mut scope = FnScope::default();
                 scope.analyze(func)?;
-                scope.gen_function(func, &mut types, &globals, w)?;
+                scope.gen_function(func, &mut types, &globals, args.analyze, w)?;
             }
             _ => (),
         }
@@ -147,6 +171,23 @@ fn run(args: &Args, src: &str) -> Result<(), Error> {
         if let parse::Item::Static(s) = item {
             data::emit_static(s, &mut types, &globals, w).at(&s.name.loc)?;
         }
+    }
+    if args.analyze {
+        let fns = program
+            .0
+            .iter()
+            .filter_map(|item| match item {
+                parse::Item::Function(f) => {
+                    Some((f.name.as_ident()?.to_owned(), f.name.loc.offset))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let opts = analyze::Opts::parse(&args.size, &args.cols, args.func.clone(), args.legend)?;
+        let asm = String::from_utf8(out)?;
+        analyze::analyze(&asm, src, files, &fns, &opts)?;
+    } else {
+        std::io::stdout().write_all(&out)?;
     }
     Ok(())
 }
