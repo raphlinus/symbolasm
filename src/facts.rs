@@ -34,6 +34,10 @@ pub struct StmtFacts {
     /// Placements just before and just after it
     pub before: Vec<Place>,
     pub after: Vec<Place>,
+    /// Just before it, sp relative to its value at entry, where known
+    pub sp: Option<i32>,
+    /// and the variables on the stack, lowest first
+    pub stack: Vec<StackPlace>,
 }
 
 /// A variable placed in a register
@@ -41,6 +45,14 @@ pub struct Place {
     pub var: String,
     pub reg: u8,
     /// The variable's type, as written in source
+    pub ty: Option<String>,
+}
+
+/// A variable placed on the stack
+pub struct StackPlace {
+    pub var: String,
+    /// Its address, relative to sp
+    pub offset: i32,
     pub ty: Option<String>,
 }
 
@@ -108,15 +120,19 @@ pub fn facts(paths: &[String], overrides: HashMap<PathBuf, String>, svd: Option<
             let stmts = insns
                 .into_iter()
                 .map(|s| {
-                    let (before, after) = places
+                    let (before, after, sp, stack) = places
                         .remove(&s.offset)
-                        .map_or((vec![], vec![]), |p| (p.before, p.after));
+                        .map_or((vec![], vec![], None, vec![]), |p| {
+                            (p.before, p.after, p.sp, p.stack)
+                        });
                     StmtFacts {
                         offset: s.offset,
                         elided: s.elided,
                         insns: s.insns,
                         before,
                         after,
+                        sp,
+                        stack,
                     }
                 })
                 .collect();

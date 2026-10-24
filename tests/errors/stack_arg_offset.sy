@@ -1,0 +1,10 @@
+// error: argument 5 of g goes at sp + 0, but sp.e is at sp + 4
+symbol g: fn(a, b, c, d, e)
+
+fn f(a, b, c, d) {
+    push(r4, lr)
+    sp -= 8 (pad, e)
+    call g(a, b, c, d, sp.e)
+    sp += 8
+    pop(r4, pc)
+}

@@ -7,9 +7,10 @@ use std::{
 };
 
 use crate::{
+    abi::Abi,
     abicheck,
     error::{Error, WithLoc},
-    facts::{Def, DefKind, Place},
+    facts::{Def, DefKind, Place, StackPlace},
     flags,
     generate::{GenCtx, LocalLabels},
     globals::Globals,
@@ -38,6 +39,10 @@ pub struct StmtPlaces {
     pub offset: usize,
     pub before: Vec<Place>,
     pub after: Vec<Place>,
+    /// sp relative to its value at entry, just before it
+    pub sp: Option<i32>,
+    /// The variables on the stack just before it
+    pub stack: Vec<StackPlace>,
 }
 
 #[derive(Debug)]
@@ -136,6 +141,12 @@ impl FnScope {
                     None => state = Some(out.clone()),
                     Some(state) => {
                         if let Err((a, c)) = state.meet(out) {
+                            // wild code may leave sp different on each
+                            // path; past here, it's just not known
+                            if ctx.abi == Abi::Wild {
+                                state.lose_sp("sp differs on paths into here");
+                                continue;
+                            }
                             return Err(format!(
                                 "sp is {} on one path into here and {} on another",
                                 sp_offset(a),
@@ -300,13 +311,28 @@ impl FnScope {
                 };
                 result.at(&func.locs[ix])?;
                 let before = facts.as_ref().map(|_| places(&regmap, types));
+                let stack = facts.as_ref().map(|_| {
+                    regmap
+                        .stack_placed()
+                        .into_iter()
+                        .map(|(var, offset)| {
+                            let ty = typemap.lookup(&var).map(|t| types.display(t));
+                            StackPlace { var, offset, ty }
+                        })
+                        .collect()
+                });
+                let sp = regmap.sp();
                 let ctx = FnCtx::new(func, types, globals, typemap);
                 regmap.apply(stmt, &ctx);
-                if let (Some(sink), Some(before)) = (facts.as_deref_mut(), before) {
+                if let (Some(sink), Some(before), Some(stack)) =
+                    (facts.as_deref_mut(), before, stack)
+                {
                     sink.push(StmtPlaces {
                         offset: func.locs[ix].offset,
                         before,
                         after: places(&regmap, types),
+                        sp,
+                        stack,
                     });
                 }
                 //_ = writeln!(w, "{ix}: {regmap:?}");

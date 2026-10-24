@@ -1,0 +1,5 @@
+// error: x isn't on the stack
+fn f() {
+    y @r0 = sp.x
+    bx lr
+}

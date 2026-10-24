@@ -1,0 +1,10 @@
+// error: argument 1 of g goes in r0, not on the stack
+symbol g: fn(a)
+
+fn f() {
+    push(r4, lr)
+    sp -= 8 (a, pad)
+    call g(sp.a)
+    sp += 8
+    pop(r4, pc)
+}

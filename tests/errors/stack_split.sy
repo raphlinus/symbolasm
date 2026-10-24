@@ -1,0 +1,13 @@
+// error: p is no longer on the stack: sp moved above it
+struct Pair {
+    a: u32
+    b: u32
+}
+
+fn f() {
+    sp -= 8 (p: Pair)
+    sp += 4
+    q @r0 = &sp.p
+    sp += 4
+    bx lr
+}

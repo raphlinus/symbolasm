@@ -1,0 +1,17 @@
+// A wild function may leave sp different on each path, even around a loop
+
+fn[abi = wild] maybe_push(a) {
+    if a == 0 goto skip
+    push(r4)
+skip:
+    bx lr
+}
+
+fn[abi = wild] push_n(n) {
+    loop {
+        push(r0)
+        #(n -= 1)
+        if #ne goto loop
+    }
+    bx lr
+}

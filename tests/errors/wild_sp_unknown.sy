@@ -1,0 +1,9 @@
+// error: a is no longer on the stack: sp differs on paths into here
+fn[abi = wild] f(a) {
+    push(a)
+    if a == 0 goto skip
+    push(r4)
+skip:
+    x @r1 = sp.a
+    bx lr
+}

@@ -714,6 +714,28 @@ fn parse_reg(s: &str) -> Option<u8> {
 fn placement(word: &str, s: &StmtFacts) -> Option<String> {
     let before = s.before.iter().find(|p| p.var == word);
     let after = s.after.iter().find(|p| p.var == word);
+    let on_stack = s.stack.iter().find(|p| p.var == word);
+    if word == "sp"
+        && let Some(sp) = s.sp
+    {
+        let at = match sp {
+            0 => "where it was at entry".to_owned(),
+            n if n < 0 => format!("{} below where it was at entry", -n),
+            n => format!("{n} above where it was at entry"),
+        };
+        let mut text = format!("`sp` is {at}");
+        for p in &s.stack {
+            text.push_str(&format!("\n\n`sp.{}` at sp + {}", p.var, p.offset));
+        }
+        return Some(text);
+    }
+    if before.is_none()
+        && after.is_none()
+        && let Some(p) = on_stack
+    {
+        let ty = p.ty.as_ref().map_or(String::new(), |t| format!(": {t}"));
+        return Some(format!("`sp.{word}{ty}` at sp + {}", p.offset));
+    }
     if let Some(p) = before.or(after) {
         let ty = p.ty.as_ref().map_or(String::new(), |t| format!(": {t}"));
         let at = match (before, after) {
@@ -723,7 +745,10 @@ fn placement(word: &str, s: &StmtFacts) -> Option<String> {
             (None, Some(a)) => format!("placed in {} here", reg_name(a.reg)),
             (None, None) => unreachable!(),
         };
-        return Some(format!("`{word}{ty}` {at}"));
+        let stack = on_stack.map_or(String::new(), |p| {
+            format!(", and `sp.{word}` at sp + {}", p.offset)
+        });
+        return Some(format!("`{word}{ty}` {at}{stack}"));
     }
     let reg = parse_reg(word)?;
     let holds = |places: &[Place]| places.iter().find(|p| p.reg == reg).map(|p| p.var.clone());

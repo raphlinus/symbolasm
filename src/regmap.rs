@@ -323,7 +323,7 @@ impl Regmap {
     }
 
     /// Lose track of sp, and with it the stack
-    fn lose_sp(&mut self, why: &str) {
+    pub fn lose_sp(&mut self, why: &str) {
         self.sp = None;
         for (_, slot) in std::mem::take(&mut self.slots) {
             self.stack_places.remove(&slot.var);

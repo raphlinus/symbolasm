@@ -372,6 +372,13 @@ impl<'a> IrCtx<'a> {
                 if expr.as_ident() == Some("peripherals") {
                     return self.lower_peripheral(field);
                 }
+                if expr.as_ident() == Some("sp") {
+                    // A struct on the stack folds its offset into its
+                    // fields, as for p.a.b
+                    let (ty, offset) = self.stack_slot(field)?;
+                    let body = Body::Field(Box::new(self.sp_expr(ty)), offset);
+                    return Ok(Expr { ty, body });
+                }
                 let expr = self.lower_expr(expr)?;
                 // The base is a pointer to a struct, or, for p.a.b, a field
                 // that is itself a struct, whose offset is folded in.
@@ -440,6 +447,21 @@ impl<'a> IrCtx<'a> {
                 ))?;
                 let ty = self.types.get_handle(&Type::Ptr(target));
                 let body = Body::Sym(id.to_owned());
+                Ok(Expr { ty, body })
+            }
+            parse::Expr::Field(base, field) if base.as_ident() == Some("sp") => {
+                let (target, offset) = self.stack_slot(field)?;
+                let ty = self.types.get_handle(&Type::Ptr(target));
+                let mut addr = self.sp_expr(target);
+                addr.ty = ty;
+                if offset == 0 {
+                    return Ok(addr);
+                }
+                let offset = Expr {
+                    ty: TypeHandle::default(),
+                    body: Body::Imm(offset as u32),
+                };
+                let body = Body::Binop(addr.into(), BinOp::Add, offset.into());
                 Ok(Expr { ty, body })
             }
             parse::Expr::Field(base, field) => {
@@ -563,6 +585,28 @@ impl<'a> IrCtx<'a> {
             return Err("addr increment must be integer")?;
         };
         Ok(Ir::WithAddrUpdate(ir.into(), *incr as i32 * sign))
+    }
+
+    /// A stack-placed variable's type and its offset from sp
+    fn stack_slot(&self, var: &Token) -> Result<(TypeHandle, usize), Error> {
+        let id = var.as_ident().ok_or("expected a variable after sp.")?;
+        let (Some(pos), Some(sp)) = (self.regmap.stack_lookup(id), self.regmap.sp()) else {
+            return match self.regmap.stack_lost(id) {
+                Some(why) => Err(format!("{id} is no longer on the stack: {why}"))?,
+                None => Err(format!("{id} isn't on the stack"))?,
+            };
+        };
+        let ty = self.typemap.lookup(id).unwrap_or_default();
+        Ok((ty, (pos - sp) as usize))
+    }
+
+    /// sp, as a pointer to `target`
+    fn sp_expr(&mut self, target: TypeHandle) -> Expr {
+        let ty = self.types.get_handle(&Type::Ptr(target));
+        Expr {
+            ty,
+            body: Body::Reg(13),
+        }
     }
 
     fn type_of_ident(&mut self, id: &str) -> Option<TypeHandle> {

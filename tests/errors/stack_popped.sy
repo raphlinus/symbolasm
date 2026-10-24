@@ -1,0 +1,7 @@
+// error: x is no longer on the stack: sp moved above it
+fn f() {
+    sp -= 8 (x, y)
+    sp += 8
+    z @r0 = sp.x
+    bx lr
+}

@@ -1,0 +1,41 @@
+// Variables placed on the stack, accessed as sp.x
+
+struct Point {
+    x: u32
+    y: u16
+}
+
+symbol use_point: fn(p: *Point)
+
+// Placed lowest first, each aligned for its type, the whole rounded up to
+// a multiple of 4
+fn locals(a, b) -> s {
+    push(r4, lr)
+    sp -= 16 (t, p: Point, c: u8)
+    sp.t = a
+    sp.p.y = b
+    q @r0 = &sp.p
+    call use_point(q)
+    v @r1 = sp.t
+    w @r2 = sp.p.y
+    s = v + w
+    sp += 16
+    pop(r4, pc)
+}
+
+// A pushed variable is on the stack too, and a pop by register number
+// places it again
+fn[abi = loose] keep(a) -> a {
+    push(a, lr)
+    b @r1 = sp.a
+    x @r0 = b + 1
+    pop(r0, pc)
+}
+
+// Arguments past the registers are on the stack at entry
+fn sixth(a, b, c, d, e, f) -> s {
+    t @r0 = sp.e
+    u @r1 = sp.f
+    s = t + u
+    bx lr
+}
