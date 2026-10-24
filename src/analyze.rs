@@ -82,7 +82,7 @@ impl Opts {
     }
 }
 
-const LEGEND: &str = "\
+pub const LEGEND: &str = "\
 size why, when a 16 bit encoding was one change away:
   H  a high register (r8 and up)
   F  the 16 bit form sets flags (or, in an IT block, doesn't)
@@ -144,14 +144,14 @@ struct Marker {
     insns: Vec<usize>,
 }
 
-pub fn analyze(
-    asm: &str,
-    src: &str,
-    files: &[(String, usize)],
-    named: &[std::ops::Range<usize>],
-    fns: &[(String, usize)],
-    opts: &Opts,
-) -> Result<(), Error> {
+/// The instructions of each function in `asm` (with `@sy` markers), with
+/// sizes and the timing model run over them.
+struct Collected {
+    insns: Vec<Insn>,
+    markers: Vec<Marker>,
+}
+
+fn collect(asm: &str, fns: &[(String, usize)]) -> Result<Collected, Error> {
     let lines: Vec<&str> = asm.lines().collect();
     let listing = parse_listing(&assemble(asm)?, lines.len());
     let fn_index: HashMap<&str, usize> = fns
@@ -257,6 +257,65 @@ pub fn analyze(
         insn.size_why = size_why(insn);
     }
 
+    Ok(Collected { insns, markers })
+}
+
+/// One statement's instructions, for the language server
+pub struct StmtInsns {
+    /// The statement's offset in the source
+    pub offset: usize,
+    /// The statement emits nothing (a move to the same register)
+    pub elided: bool,
+    pub insns: Vec<InsnFacts>,
+}
+
+pub struct InsnFacts {
+    pub asm: String,
+    /// In bytes, 2 or 4
+    pub size: u32,
+    pub size_why: Option<char>,
+    /// Cycles, n or not-taken/taken (or a range for divides)
+    pub cyc: String,
+    /// The why codes, one per lost cycle, except `?`
+    pub cyc_why: String,
+}
+
+/// The instructions of each statement in `asm`, which must have `@sy`
+/// markers (from `compile` with `facts`).
+pub fn statements(asm: &str, fns: &[(String, usize)]) -> Result<Vec<StmtInsns>, Error> {
+    let Collected { insns, markers } = collect(asm, fns)?;
+    Ok(markers
+        .iter()
+        .map(|m| StmtInsns {
+            offset: m.offset,
+            elided: m.assign && m.insns.is_empty(),
+            insns: m
+                .insns
+                .iter()
+                .map(|&i| {
+                    let insn = &insns[i];
+                    InsnFacts {
+                        asm: insn.text.clone(),
+                        size: insn.size(),
+                        size_why: insn.size_why,
+                        cyc: insn.cyc.clone(),
+                        cyc_why: insn.cyc_why.clone(),
+                    }
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+pub fn analyze(
+    asm: &str,
+    src: &str,
+    files: &[(String, usize)],
+    named: &[std::ops::Range<usize>],
+    fns: &[(String, usize)],
+    opts: &Opts,
+) -> Result<(), Error> {
+    let Collected { insns, markers } = collect(asm, fns)?;
     if opts.legend {
         print!("{LEGEND}\n");
     }
@@ -432,7 +491,10 @@ impl<'a> SrcLines<'a> {
 }
 
 fn assemble(asm: &str) -> Result<String, Error> {
-    let dir = std::env::temp_dir().join(format!("symbolasm-analyze-{}", std::process::id()));
+    // Unique to each call, as the library may be called from threads
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("symbolasm-analyze-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let s = dir.join("in.s");
     let lst = dir.join("in.lst");

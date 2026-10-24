@@ -81,6 +81,29 @@ impl TypePool {
         }
     }
 
+    /// A type as it would be written in source
+    pub fn display(&self, handle: TypeHandle) -> String {
+        match self.get(handle) {
+            Type::Default | Type::U32 => "u32".into(),
+            Type::U16 => "u16".into(),
+            Type::U8 => "u8".into(),
+            Type::I32 => "i32".into(),
+            Type::I16 => "i16".into(),
+            Type::I8 => "i8".into(),
+            Type::Ptr(t) => format!("*{}", self.display(*t)),
+            Type::Struct(_) => self
+                .globals
+                .iter()
+                .find(|(_, h)| **h == handle)
+                .map_or_else(|| "struct".into(), |(name, _)| name.clone()),
+            Type::Tuple(t) => {
+                let els: Vec<String> = self.tuples[t.0].iter().map(|e| self.display(*e)).collect();
+                format!("({})", els.join(", "))
+            }
+            Type::Array(t, n) => format!("[{}; {n}]", self.display(*t)),
+        }
+    }
+
     pub fn get(&self, handle: TypeHandle) -> &Type {
         &self.types[handle.0]
     }

@@ -5,6 +5,7 @@ use std::{collections::HashMap, io::Write};
 
 use crate::{
     error::{Error, WithLoc},
+    facts::{Def, DefKind, Place},
     flags,
     generate::{GenCtx, LocalLabels},
     globals::Globals,
@@ -25,6 +26,14 @@ pub struct FnScope {
     /// Placements at the end of each basic block, parallel to basic_blocks
     regmaps: Vec<Regmap>,
     basic_block_starts: HashMap<usize, usize>,
+}
+
+/// The placements just before and just after a statement, for `facts`
+pub struct StmtPlaces {
+    /// The statement's offset in the source
+    pub offset: usize,
+    pub before: Vec<Place>,
+    pub after: Vec<Place>,
 }
 
 #[derive(Debug)]
@@ -146,6 +155,26 @@ impl FnScope {
         }
     }
 
+    /// The labels written in the source as `name:` (not the ones block
+    /// structure brings in), for go to definition
+    pub fn label_defs(&self, func: &Function, src: &str, defs: &mut Vec<Def>) {
+        let fn_name = func.name.as_ident().unwrap_or_default();
+        for (name, &ix) in &self.labels {
+            let offset = func.locs[ix].offset;
+            let written = src[offset..]
+                .strip_prefix(name.as_str())
+                .is_some_and(|rest| rest.starts_with(':'));
+            if written {
+                defs.push(Def {
+                    name: name.clone(),
+                    kind: DefKind::Label,
+                    offset,
+                    func: Some(fn_name.to_owned()),
+                });
+            }
+        }
+    }
+
     fn start_basic_block(&mut self, start: usize) {
         self.basic_block_starts
             .insert(start, self.basic_blocks.len());
@@ -168,9 +197,10 @@ impl FnScope {
         func: &Function,
         types: &mut TypePool,
         globals: &Globals,
-        markers: bool,
+        mut facts: Option<&mut Vec<StmtPlaces>>,
         w: &mut impl Write,
     ) -> Result<(), Error> {
+        let markers = facts.is_some();
         if let Some(name) = func.name.as_ident() {
             match &func.link_section {
                 Some(section) => {
@@ -202,6 +232,16 @@ impl FnScope {
         let typemap = type_inf_ctx.infer(func).at(&func.name.loc)?;
         let if_analysis = ifthen::analyze_ift(&func.body);
         let live_flags = flags::live_after(&func.body, &if_analysis, &self.basic_blocks);
+        let places = |regmap: &Regmap, types: &TypePool| -> Vec<Place> {
+            regmap
+                .placed()
+                .into_iter()
+                .map(|(var, reg)| {
+                    let ty = typemap.lookup(&var).map(|t| types.display(t));
+                    Place { var, reg, ty }
+                })
+                .collect()
+        };
         //println!("{if_analysis:?}");
         for block in &self.basic_blocks[1..] {
             let mut regmap = if let Some((pred, tail)) = block.pred.split_first() {
@@ -235,7 +275,15 @@ impl FnScope {
                     gen_ctx.gen_stmt(stmt, &regmap, &labels, if_state)
                 };
                 result.at(&func.locs[ix])?;
+                let before = facts.as_ref().map(|_| places(&regmap, types));
                 regmap.apply(stmt);
+                if let (Some(sink), Some(before)) = (facts.as_deref_mut(), before) {
+                    sink.push(StmtPlaces {
+                        offset: func.locs[ix].offset,
+                        before,
+                        after: places(&regmap, types),
+                    });
+                }
                 //_ = writeln!(w, "{ix}: {regmap:?}");
             }
         }

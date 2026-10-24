@@ -204,6 +204,17 @@ impl Regmap {
         }
     }
 
+    /// The variables placed, and their registers, in register order
+    pub fn placed(&self) -> Vec<(String, u8)> {
+        let mut v: Vec<(String, u8)> = self
+            .reg_contents
+            .iter()
+            .map(|(&reg, var)| (var.clone(), reg))
+            .collect();
+        v.sort_by_key(|&(_, reg)| reg);
+        v
+    }
+
     pub fn lookup(&self, id: &str) -> Option<u8> {
         if let Some(reg) = self.var_places.get(id) {
             *reg

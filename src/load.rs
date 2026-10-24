@@ -9,17 +9,17 @@
 //! tokenizing; the parser just checks their syntax.
 
 use std::{
-    collections::HashSet,
-    io::Read,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
 pub struct Loader {
-    /// A file whose text comes from stdin, as if it were on disk
-    stdin: Option<(PathBuf, String)>,
+    /// Files whose text is given, by canonical path, rather than read from
+    /// disk: stdin, or an editor's unsaved buffers
+    overrides: HashMap<PathBuf, String>,
     loaded: HashSet<PathBuf>,
     /// The canonical path of each of `files`
-    canon: Vec<PathBuf>,
+    pub canon: Vec<PathBuf>,
     /// The chain of uses being loaded, for reporting a cycle
     active: Vec<(PathBuf, String)>,
     /// Path as written (relative to the using file's directory), text, and
@@ -48,29 +48,16 @@ impl LoadError {
 }
 
 impl Loader {
-    /// `stdin`: the path of a file to read from stdin instead of disk.
-    pub fn new(stdin: Option<&str>) -> Result<Self, LoadError> {
-        let stdin = match stdin {
-            Some(path) => {
-                let canon = canonical(path, None)?;
-                let mut text = String::new();
-                std::io::stdin()
-                    .read_to_string(&mut text)
-                    .map_err(|e| LoadError {
-                        msg: format!("reading stdin: {e}"),
-                        at: None,
-                    })?;
-                Some((canon, text))
-            }
-            None => None,
-        };
-        Ok(Loader {
-            stdin,
+    /// `overrides`: texts to use instead of the files on disk, by canonical
+    /// path (see `canonical`).
+    pub fn new(overrides: HashMap<PathBuf, String>) -> Self {
+        Loader {
+            overrides,
             loaded: HashSet::new(),
             canon: vec![],
             active: vec![],
             files: vec![],
-        })
+        }
     }
 
     /// Load `path` and the files it uses. `at` is the `use` naming it.
@@ -95,9 +82,9 @@ impl Loader {
             }
             return Ok(());
         }
-        let text = match &self.stdin {
-            Some((c, text)) if *c == canon => text.clone(),
-            _ => std::fs::read_to_string(&canon).map_err(|e| LoadError {
+        let text = match self.overrides.get(&canon) {
+            Some(text) => text.clone(),
+            None => std::fs::read_to_string(&canon).map_err(|e| LoadError {
                 msg: format!("reading {path}: {e}"),
                 at: at.clone(),
             })?,
@@ -124,7 +111,11 @@ impl Loader {
     }
 }
 
-fn canonical(path: &str, at: Option<(String, String, usize, usize)>) -> Result<PathBuf, LoadError> {
+/// The path files are known by, for overrides
+pub fn canonical(
+    path: &str,
+    at: Option<(String, String, usize, usize)>,
+) -> Result<PathBuf, LoadError> {
     std::fs::canonicalize(path).map_err(|e| LoadError {
         msg: format!("reading {path}: {e}"),
         at,
