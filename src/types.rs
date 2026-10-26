@@ -56,6 +56,8 @@ pub enum Type {
     I32,
     I16,
     I8,
+    /// Single precision float, the FPU's type
+    F32,
     Ptr(TypeHandle),
     Struct(StructHandle),
     Tuple(TupleHandle),
@@ -79,6 +81,17 @@ pub struct StructField {
     pub name: String,
     pub ty: TypeHandle,
     pub offset: usize,
+}
+
+impl FnSig {
+    /// Whether each argument is an f32, which decides its register
+    pub fn arg_floats(&self, types: &TypePool) -> Vec<bool> {
+        self.args.iter().map(|t| types.get(*t).is_float()).collect()
+    }
+
+    pub fn ret_floats(&self, types: &TypePool) -> Vec<bool> {
+        self.rets.iter().map(|t| types.get(*t).is_float()).collect()
+    }
 }
 
 impl TypePool {
@@ -109,6 +122,7 @@ impl TypePool {
             Type::I32 => "i32".into(),
             Type::I16 => "i16".into(),
             Type::I8 => "i8".into(),
+            Type::F32 => "f32".into(),
             Type::Ptr(t) => format!("*{}", self.display(*t)),
             Type::Struct(_) => self
                 .globals
@@ -155,6 +169,7 @@ impl TypePool {
                     "i32" => Type::I32,
                     "i16" => Type::I16,
                     "i8" => Type::I8,
+                    "f32" => Type::F32,
                     _ => {
                         if let Some(ty) = self.globals.get(ty_name) {
                             return Ok(*ty);
@@ -218,10 +233,12 @@ impl TypePool {
         };
         let args = norm(args, "arguments")?;
         let rets = norm(rets, "results")?;
-        if rets.len() > abi.n_regs() {
+        let n_fp = rets.iter().filter(|t| self.get(**t).is_float()).count();
+        if rets.len() - n_fp > abi.n_regs() || n_fp > abi.n_regs() {
             Err(format!(
-                "a {} function returns at most {} results",
+                "a {} function returns at most {} integer and {} f32 results",
                 abi.name(),
+                abi.n_regs(),
                 abi.n_regs()
             ))?;
         }
@@ -254,6 +271,7 @@ impl TypePool {
             "i32" => Type::I32,
             "i16" => Type::I16,
             "i8" => Type::I8,
+            "f32" => Type::F32,
             _ => return self.globals.get(name).copied(),
         };
         Some(self.get_handle(&prim_ty))
@@ -352,6 +370,7 @@ impl TypePool {
             Type::I32 => TypeInfo::new(4, 4),
             Type::I16 => TypeInfo::new(2, 2),
             Type::I8 => TypeInfo::new(1, 1),
+            Type::F32 => TypeInfo::new(4, 4),
             Type::Ptr(_type_handle) => TypeInfo::new(4, 4),
             Type::Fn(_) => TypeInfo::new(4, 4),
             // This will get filled in later (in `populate_struct`)
@@ -410,6 +429,10 @@ impl TypePool {
 impl Type {
     pub fn is_signed(&self) -> bool {
         matches!(self, Type::I8 | Type::I16 | Type::I32)
+    }
+
+    pub fn is_float(&self) -> bool {
+        matches!(self, Type::F32)
     }
 }
 

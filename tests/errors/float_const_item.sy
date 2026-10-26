@@ -1,0 +1,6 @@
+// error: only integers are constant expressions, not f32s
+const PI = 3.14159
+
+fn f() {
+    bx lr
+}

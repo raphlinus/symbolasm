@@ -1,0 +1,6 @@
+// error: f32_to_i32 takes an f32
+fn f(n: i32) {
+    x @s0 = n
+    m @s1 = f32_to_i32(x)
+    bx lr
+}

@@ -18,7 +18,11 @@ use std::{
     process::Command,
 };
 
-use crate::{error::Error, flags};
+use crate::{
+    error::Error,
+    flags,
+    regmap::{S0, is_sreg},
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum SizeMode {
@@ -89,7 +93,8 @@ size why, when a 16 bit encoding was one change away:
   3  the 16 bit form needs Rd to also be a source
 cycle why, shown only when a cycle is lost:
   L  load-use: a source is the previous load's result
-  R  result-use: a source is the previous multiply, divide or complex op's result
+  R  result-use: a source is the previous multiply, divide, complex op or FPU
+     op's result
   S  a complex op (rotated immediate, shift not lsl #0-3) or muls that sets flags
   U  the branch target (for bl, the callee) is 32 bit and not word aligned
   u  the branch target is 32 bit; its alignment isn't known
@@ -852,9 +857,30 @@ const CONDS: &[&str] = &[
     "eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le",
 ];
 
+/// FPU mnemonics, without their data types (`vadd` of `vadd.f32`)
+const VBASES: &[&str] = &[
+    "vabs", "vadd", "vcmp", "vcmpe", "vcvt", "vcvta", "vcvtm", "vcvtn", "vcvtp", "vcvtr", "vdiv",
+    "vfma", "vfms", "vfnma", "vfnms", "vldm", "vldmia", "vldmdb", "vldr", "vmaxnm", "vminnm",
+    "vmla", "vmls", "vmov", "vmrs", "vmsr", "vmul", "vneg", "vnmla", "vnmls", "vnmul", "vpop",
+    "vpush", "vrinta", "vrintm", "vrintn", "vrintp", "vrintr", "vrintx", "vrintz", "vsel", "vsqrt",
+    "vstm", "vstmia", "vstmdb", "vstr", "vsub",
+];
+
 /// Base mnemonic, `s` suffix, and condition.
 fn parse_mnemonic(m: &str) -> (String, bool, Option<String>) {
     let m = m.trim_end_matches(".w").trim_end_matches(".n");
+    // An FPU instruction's condition comes before its data types, as in
+    // vaddeq.f32
+    if m.starts_with('v') {
+        let head = m.split('.').next().unwrap_or(m);
+        if VBASES.contains(&head) {
+            return (head.into(), false, None);
+        }
+        let (b, cond) = head.split_at(head.len().saturating_sub(2));
+        if VBASES.contains(&b) && CONDS.contains(&cond) {
+            return (b.into(), false, Some(cond.into()));
+        }
+    }
     if m.len() <= 5 && m.starts_with("it") && m[2..].chars().all(|c| c == 't' || c == 'e') {
         return ("it".into(), false, None);
     }
@@ -906,6 +932,10 @@ fn parse_reg(s: &str) -> Option<u8> {
         "fp" => Some(11),
         "sl" => Some(10),
         "sb" => Some(9),
+        s if s.starts_with('s') => {
+            let n: u8 = s[1..].parse().ok()?;
+            (n < 32).then_some(S0 + n)
+        }
         s => {
             let n: u8 = s.strip_prefix('r')?.parse().ok()?;
             (n < 16).then_some(n)
@@ -1002,6 +1032,8 @@ struct Effects {
     /// Results with a two-cycle latency
     late: Vec<u8>,
     late_is_load: bool,
+    /// Cycles a use of a late result waits, past the first
+    late_extra: i32,
     complex: bool,
 }
 
@@ -1029,6 +1061,43 @@ fn effects(insn: &Insn) -> Effects {
     let last_of =
         |l: Vec<u8>| -> Vec<u8> { l.last().copied().filter(|&r| r != 15).into_iter().collect() };
     let mut e = Effects::default();
+    // FPU instructions, as measured in rp2350-measure: most results are a
+    // cycle late for the next instruction, and a vmov to a core register
+    // two. vldr's result, a multiply-accumulate's accumulator and vmrs's
+    // flags aren't late.
+    let b = insn.base.as_str();
+    if b.starts_with('v') {
+        let rest: Vec<u8> = ops.iter().skip(1).flat_map(op_regs).collect();
+        match b {
+            "vldm" | "vldmia" | "vldmdb" | "vstm" | "vstmia" | "vstmdb" => {
+                e.srcs = reg_at(ops, 0).into_iter().collect();
+                if b.starts_with("vstm") {
+                    e.srcs.extend(list());
+                }
+            }
+            "vpush" => e.srcs = list(),
+            "vpop" => (),
+            "vstr" | "vcmp" | "vcmpe" => e.srcs = all.clone(),
+            "vmrs" => (),
+            "vldr" => e.srcs = rest,
+            "vmla" | "vmls" | "vnmla" | "vnmls" | "vfma" | "vfms" | "vfnma" | "vfnms" => {
+                e.srcs = all.clone();
+                e.accum = all[..1].to_vec();
+            }
+            "vmov" if ops.len() == 2 && reg_at(ops, 0).is_some_and(|r| !is_sreg(r)) => {
+                e.srcs = rest;
+                e.late = all[..1].to_vec();
+                e.late_extra = 1;
+            }
+            // From a core register, an immediate, or another s register
+            "vmov" => e.srcs = rest,
+            _ => {
+                e.srcs = rest;
+                e.late = all.first().copied().into_iter().collect();
+            }
+        }
+        return e;
+    }
     match insn.base.as_str() {
         "cmp" | "cmn" | "tst" | "teq" | "bx" | "blx" | "cbz" | "cbnz" | "mcr" | "mcrr" => {
             e.srcs = all
@@ -1177,7 +1246,7 @@ fn multiply(hw: &[u16]) -> Option<bool> {
 }
 
 fn sets_flags(insn: &Insn) -> bool {
-    insn.s || matches!(insn.base.as_str(), "cmp" | "cmn" | "tst" | "teq")
+    insn.s || matches!(insn.base.as_str(), "cmp" | "cmn" | "tst" | "teq" | "vmrs")
 }
 
 /// What the timing of the next instruction needs from this one.
@@ -1194,6 +1263,7 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>, fn_aligned: &[bool
     let mut prev: Option<Prev> = None;
     let mut late: Vec<u8> = vec![];
     let mut late_is_load = false;
+    let mut late_extra = 0;
     for i in 0..insns.len() {
         if i > 0 && insns[i - 1].func != insns[i].func {
             prev = None;
@@ -1227,11 +1297,12 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>, fn_aligned: &[bool
             .filter(|r| late.contains(r) && !e.accum.contains(r))
             .collect();
         if !hit.is_empty() {
-            extra += 1;
+            extra += 1 + late_extra;
             why.push(if late_is_load { 'L' } else { 'R' });
         }
         let mut next_late = e.late.clone();
         let mut next_late_is_load = e.late_is_load;
+        let next_late_extra = e.late_extra;
         let base = insn.base.as_str();
         if e.complex && sets_flags(insn) {
             // Paid here whatever comes next, so nothing is left for the
@@ -1352,6 +1423,22 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>, fn_aligned: &[bool
                 format!("{}", extra + n.unwrap_or(1) as i32)
             }
             "ldrd" | "strd" => format!("{}", extra + 2),
+            // The FPU, measured in rp2350-measure. A divide or square root
+            // holds up later FPU instructions, but integer ones overlap it.
+            "vdiv" | "vsqrt" => format!("{}", extra + 14),
+            "vmla" | "vmls" | "vnmla" | "vnmls" | "vfma" | "vfms" | "vfnma" | "vfnms" => {
+                format!("{}", extra + 3)
+            }
+            "vmrs" => format!("{}", extra + 2),
+            "vldm" | "vldmia" | "vldmdb" | "vstm" | "vstmia" | "vstmdb" | "vpush" | "vpop" => {
+                let n = insn.ops.iter().find_map(|o| match o {
+                    Op::List(l) => Some(l.len()),
+                    _ => None,
+                });
+                format!("{}", extra + n.unwrap_or(1) as i32)
+            }
+            // Two core registers to or from two s registers
+            "vmov" if insn.ops.len() == 4 => format!("{}", extra + 2),
             _ => format!("{}", extra + 1),
         };
         let this = Prev {
@@ -1368,6 +1455,7 @@ fn model(insns: &mut [Insn], labels: &HashMap<String, usize>, fn_aligned: &[bool
             prev = Some(this);
             late = next_late;
             late_is_load = next_late_is_load;
+            late_extra = next_late_extra;
         }
         let insn = &mut insns[i];
         insn.cyc = cyc;

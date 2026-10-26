@@ -1,0 +1,5 @@
+// error: at this return, result y should be in s0
+fn f(a: f32) -> y: f32 {
+    t @s1 = a + a
+    bx lr
+}

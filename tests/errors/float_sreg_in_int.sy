@@ -1,0 +1,6 @@
+// error: s registers can only be moved to r0, not used in its arithmetic
+fn f(a: f32, n) {
+    x @s0 = a
+    r @r0 = n + x
+    bx lr
+}

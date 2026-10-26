@@ -1,0 +1,6 @@
+// error: integer arithmetic is done in core registers, not s1
+fn f(n: u32) {
+    x @s0 = n
+    y @s1 = x + x
+    bx lr
+}

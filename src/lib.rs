@@ -240,6 +240,20 @@ pub fn compile(source: &Source, svd: Option<&str>, facts: bool) -> Result<Output
             data::emit_static(s, &mut types, &globals, w).at(&s.name.loc)?;
         }
     }
+    // The FPU, only where it's used, since the directive also marks the
+    // object file as using it
+    let header = ".thumb\n";
+    if out
+        .split(|&b| b == b'\n')
+        .any(|line| line.starts_with(b"    v"))
+    {
+        let at = out
+            .windows(header.len())
+            .position(|w| w == header.as_bytes())
+            .unwrap();
+        let at = at + header.len();
+        out.splice(at..at, b".fpu fpv5-sp-d16\n".iter().copied());
+    }
     let fns = program
         .0
         .iter()

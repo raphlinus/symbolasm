@@ -1,0 +1,10 @@
+// error: x is no longer in a register: the call to g clobbers s0
+symbol g: fn()
+
+fn f(a: f32) {
+    push(r4, lr)
+    x @s0 = a
+    call g()
+    a @r0 = x
+    pop(r4, pc)
+}

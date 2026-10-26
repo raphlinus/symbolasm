@@ -1,0 +1,9 @@
+// error: argument 3 of g goes in r1, but b is in r2
+symbol g: fn(a: u32, x: f32, b: u32)
+
+fn f(a: u32, x: f32, b: u32) {
+    push(r4, lr)
+    b @r2 = a
+    call g(a, x, b)
+    pop(r4, pc)
+}

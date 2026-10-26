@@ -1,0 +1,5 @@
+// error: s0 is a register, so it can't name a variable
+fn f(b) {
+    s0 @r4 = b & 31
+    bx lr
+}

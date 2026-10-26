@@ -1,0 +1,7 @@
+// error: f32 arithmetic is done in s registers, not r2
+fn f(a: f32, b: f32) {
+    x @r0 = a
+    y @r1 = b
+    c @r2 = x + y
+    bx lr
+}

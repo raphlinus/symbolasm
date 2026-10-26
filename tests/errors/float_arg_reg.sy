@@ -1,0 +1,9 @@
+// error: argument 1 of g goes in s0, but x is in r0
+symbol g: fn(x: f32)
+
+fn f(a: f32) {
+    push(r4, lr)
+    x @r0 = a
+    call g(x)
+    pop(r4, pc)
+}

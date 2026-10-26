@@ -6,7 +6,7 @@
 //! Each check sees the placements just before its statement.
 
 use crate::{
-    abi::Abi,
+    abi::{Abi, Place},
     error::Error,
     parse::Expr,
     regmap::{FnCtx, Regmap, describe, entry_var, is_sp, parse_register, reg_name},
@@ -87,18 +87,12 @@ pub fn check_call(call: &Call, regmap: &Regmap, ctx: &FnCtx) -> Result<CallTarge
             call.args.len()
         ))?;
     }
-    let n_regs = sig.abi.n_regs();
-    for (i, arg) in call.args.iter().enumerate() {
-        if i < n_regs {
-            check_in_reg(
-                arg,
-                i as u8,
-                &format!("argument {} of {name}", i + 1),
-                regmap,
-            )?;
-        } else {
-            let want = 4 * (i - n_regs) as i32;
-            check_on_stack(arg, want, &format!("argument {} of {name}", i + 1), regmap)?;
+    let places = sig.abi.arg_places(&sig.arg_floats(ctx.types));
+    for (i, (arg, place)) in call.args.iter().zip(places).enumerate() {
+        let what = format!("argument {} of {name}", i + 1);
+        match place {
+            Place::Reg(reg) => check_in_reg(arg, reg, &what, regmap)?,
+            Place::Stack(want) => check_on_stack(arg, want, &what, regmap)?,
         }
     }
     if !call.rets.is_empty() && call.rets.len() != sig.rets.len() {
@@ -108,20 +102,22 @@ pub fn check_call(call: &Call, regmap: &Regmap, ctx: &FnCtx) -> Result<CallTarge
             call.rets.len()
         ))?;
     }
-    for (i, ret) in call.rets.iter().enumerate() {
+    let ret_regs = sig.abi.ret_regs(&sig.ret_floats(ctx.types));
+    for (i, (ret, want)) in call.rets.iter().zip(ret_regs).enumerate() {
         let what = format!("result {} of {name}", i + 1);
+        let r = reg_name(want);
         match ret {
             Expr::Binop(var, _, place) => {
                 let var = var.as_ident().unwrap_or_default();
-                if place.as_ident().and_then(parse_register) != Some(i as u8) {
-                    Err(format!("{what} is in r{i}, so {var} must be placed there"))?;
+                if place.as_ident().and_then(parse_register) != Some(want) {
+                    Err(format!("{what} is in {r}, so {var} must be placed there"))?;
                 }
             }
             _ => {
                 let var = ret.as_ident().unwrap_or_default();
                 let reg = parse_register(var).or_else(|| regmap.lookup(var));
-                if reg != Some(i as u8) {
-                    Err(format!("{what} is in r{i}; write {var} @r{i} = call ..."))?;
+                if reg != Some(want) {
+                    Err(format!("{what} is in {r}; write {var} @{r} = call ..."))?;
                 }
             }
         }
@@ -134,29 +130,30 @@ pub fn check_call(call: &Call, regmap: &Regmap, ctx: &FnCtx) -> Result<CallTarge
 
 /// An argument in a register: a variable placed there, or the register
 fn check_in_reg(arg: &Expr, reg: u8, what: &str, regmap: &Regmap) -> Result<(), Error> {
+    let place = reg_name(reg);
     let Some(var) = arg.as_ident() else {
         if let Expr::Field(base, _) = arg
             && is_sp(base)
         {
-            Err(format!("{what} goes in r{reg}, not on the stack"))?;
+            Err(format!("{what} goes in {place}, not on the stack"))?;
         }
-        Err(format!("{what} must be a variable in r{reg}"))?
+        Err(format!("{what} must be a variable in {place}"))?
     };
     if let Some(r) = parse_register(var) {
         if r != reg {
-            Err(format!("{what} goes in r{reg}, not {var}"))?;
+            Err(format!("{what} goes in {place}, not {var}"))?;
         }
         return Ok(());
     }
     match regmap.lookup(var) {
         Some(r) if r == reg => Ok(()),
         Some(r) => Err(format!(
-            "{what} goes in r{reg}, but {var} is in {}",
+            "{what} goes in {place}, but {var} is in {}",
             reg_name(r)
         ))?,
         None => match regmap.lost(var) {
             Some(why) => Err(format!("{var} is no longer in a register: {why}"))?,
-            None => Err(format!("{what} goes in r{reg}, but {var} isn't placed"))?,
+            None => Err(format!("{what} goes in {place}, but {var} isn't placed"))?,
         },
     }
 }
@@ -197,7 +194,7 @@ fn check_tail(call: &Call, sig: &FnSig, regmap: &Regmap, ctx: &FnCtx) -> Result<
             "a tail call returns {name}'s results, which differ from this function's"
         ))?;
     }
-    for &r in ctx.abi.callee_saved() {
+    for r in ctx.abi.callee_saved() {
         if sig.abi.clobbers().get(r as usize) {
             Err(format!(
                 "{name} is a {} function, which may clobber {}, but this {} function must keep it",
@@ -228,7 +225,7 @@ fn check_exit(regmap: &Regmap, ctx: &FnCtx, lr: bool, what: &str) -> Result<(), 
             sp.abs()
         ))?;
     }
-    let mut regs: Vec<u8> = ctx.abi.callee_saved().to_vec();
+    let mut regs: Vec<u8> = ctx.abi.callee_saved();
     if lr {
         regs.push(14);
     }
@@ -258,12 +255,15 @@ fn check_rets(regmap: &Regmap, ctx: &FnCtx, what: &str) -> Result<(), Error> {
     if ctx.abi == Abi::Wild {
         return Ok(());
     }
-    for (i, ret) in ctx.rets.iter().enumerate() {
-        if regmap.lookup(ret) != Some(i as u8) {
+    for (ret, reg) in ctx.rets.iter().zip(ctx.ret_regs()) {
+        if regmap.lookup(ret) != Some(reg) {
             let why = regmap
                 .lost(ret)
                 .unwrap_or("it isn't assigned on every path here");
-            Err(format!("at {what}, result {ret} should be in r{i}: {why}"))?;
+            Err(format!(
+                "at {what}, result {ret} should be in {}: {why}",
+                reg_name(reg)
+            ))?;
         }
     }
     Ok(())

@@ -27,7 +27,7 @@ pub fn eval(
     match expr {
         Expr::Literal(lit) => {
             let TokBody::Number(n) = lit.tok else {
-                return Err("malformed literal")?;
+                return Err("only integers are constant expressions, not f32s")?;
             };
             u32::try_from(n).map_err(|_| format!("{n} doesn't fit in 32 bits").into())
         }

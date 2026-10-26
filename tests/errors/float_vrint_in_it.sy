@@ -1,0 +1,9 @@
+// error: vrintm.f32 can't be conditional
+fn f(a: f32, n) {
+    x @s0 = a
+    #(n - 0)
+    if #eq {
+        x = floor(x)
+    }
+    bx lr
+}

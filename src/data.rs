@@ -143,6 +143,10 @@ fn emit_init(
         }
         (Type::Struct(_), _) => Err("a struct needs a Name { field: value } initializer")?,
         (_, Init::Struct(..)) => Err("a struct initializer needs a struct type")?,
+        (Type::F32, Init::Expr(e)) => {
+            let bits = float_value(e).ok_or("an f32 needs a constant like 1.0 or -0.5")?;
+            writeln!(w, "    .word {bits:#010x}")?;
+        }
         (scalar, Init::Expr(e)) => {
             let directive = scalar_directive(&scalar).ok_or("can't initialize this type")?;
             let size = types.info(ty).size();
@@ -219,6 +223,20 @@ fn value(e: &Expr, types: &mut TypePool, globals: &Globals) -> Result<Value, Err
         return Ok(Value::Sym(name, offset));
     }
     Ok(Value::Num(consts::eval(e, types, &globals.statics)?))
+}
+
+/// The bits of an f32 constant, `1.5` or `-1.5`
+fn float_value(e: &Expr) -> Option<u32> {
+    match e {
+        Expr::Literal(lit) => match lit.tok {
+            crate::lex::TokBody::Float(bits) => Some(bits),
+            _ => None,
+        },
+        Expr::Unary(op, inner) if op.tok == crate::lex::TokBody::Minus => {
+            float_value(inner).map(|bits| bits ^ 0x8000_0000)
+        }
+        _ => None,
+    }
 }
 
 fn address_name(e: &Expr, globals: &Globals) -> Option<String> {

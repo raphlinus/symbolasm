@@ -1,0 +1,6 @@
+// error: an f32 constant needs a decimal point, as in 1.0
+fn f(a: f32) {
+    x @s0 = a
+    x = 1
+    bx lr
+}

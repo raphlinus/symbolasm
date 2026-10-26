@@ -1,0 +1,5 @@
+// error: at this return, s16 should hold the s16 it had at entry: s16 now holds x
+fn f(a: f32) {
+    x @s16 = a
+    bx lr
+}

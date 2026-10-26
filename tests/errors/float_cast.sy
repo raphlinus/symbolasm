@@ -1,0 +1,5 @@
+// error: as doesn't convert between f32 and integers
+fn f(a: f32) {
+    n @s1 = a as i32
+    bx lr
+}

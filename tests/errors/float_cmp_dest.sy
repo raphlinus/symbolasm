@@ -1,0 +1,5 @@
+// error: cmp sets the FPU's flags, so write fpscr = cmp(a, b)
+fn f(x: f32, y: f32) {
+    z @s2 = cmp(x, y)
+    bx lr
+}

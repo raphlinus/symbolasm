@@ -77,6 +77,8 @@ fn expr_writes(expr: &Expr) -> u8 {
     match expr {
         Expr::Binop(_, op, _) if matches!(op.tok, TokBody::Plus | TokBody::Minus) => NZCV,
         Expr::Binop(a, op, _) if op.tok == TokBody::At => expr_writes(a),
+        // vmrs copies all four from the FPU
+        Expr::Ident(tok) if tok.as_ident() == Some("fpscr") => NZCV,
         Expr::Unary(op, _) if op.tok == TokBody::Minus => NZCV,
         _ => NZ,
     }

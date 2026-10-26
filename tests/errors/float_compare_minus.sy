@@ -1,0 +1,5 @@
+// error: compare f32s with fpscr = cmp(a, b), then copy the flags with #(fpscr)
+fn f(x: f32, y: f32) {
+    #(x - y)
+    bx lr
+}

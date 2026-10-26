@@ -307,7 +307,7 @@ fn parse_sig_type(toks: &mut TokBuf) -> Result<Type, Error> {
         if toks.expect_opt(&TokBody::Colon) {
             return parse_type(toks);
         }
-        let is_prim = ["u32", "u16", "u8", "i32", "i16", "i8"]
+        let is_prim = ["u32", "u16", "u8", "i32", "i16", "i8", "f32"]
             .iter()
             .any(|p| tok.match_str(p));
         if is_prim {
@@ -1005,7 +1005,7 @@ fn parse_trailer_expr(toks: &mut TokBuf) -> Result<Expr, Error> {
                 Expr::Ident(name)
             }
         }
-        TokBody::Number(_) => Expr::Literal(first.clone()),
+        TokBody::Number(_) | TokBody::Float(_) => Expr::Literal(first.clone()),
         _ => Err("unknown token for expr")?,
     };
     while let Some(first) = toks.peek() {

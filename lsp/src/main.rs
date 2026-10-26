@@ -696,6 +696,8 @@ fn reg_name(r: u8) -> String {
         13 => "sp".into(),
         14 => "lr".into(),
         15 => "pc".into(),
+        // s0-s31 follow the core registers, as in the compiler
+        32.. => format!("s{}", r - 32),
         _ => format!("r{r}"),
     }
 }
@@ -705,6 +707,7 @@ fn parse_reg(s: &str) -> Option<u8> {
         "sp" => Some(13),
         "lr" => Some(14),
         "pc" => Some(15),
+        _ if s.starts_with('s') => s[1..].parse().ok().filter(|&n| n < 32).map(|n: u8| n + 32),
         _ => s.strip_prefix('r')?.parse().ok().filter(|&n| n < 16),
     }
 }

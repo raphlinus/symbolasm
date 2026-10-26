@@ -6,6 +6,8 @@
 //! This approach is clunky, and is going to run into problems when types are
 //! needed.
 
+mod float;
+
 use std::{borrow::Cow, collections::HashMap, io::Write, ops::Deref};
 
 use crate::{
@@ -16,7 +18,7 @@ use crate::{
     ir::{Assign, BinOp, Body, Expr, Half, Ir, UnaryOp},
     lex::{TokBody, Token},
     parse,
-    regmap::{Regmap, parse_register},
+    regmap::{FPSCR, Regmap, S0, is_sreg, parse_register, reg_name},
     stmt::Stmt,
     types::{Type, TypeHandle, TypePool},
 };
@@ -106,6 +108,20 @@ impl<'a, W: Write> GenCtx<'a, W> {
                 lhs:
                     Expr {
                         body: Body::Reg(lhs),
+                        ty,
+                    },
+                rhs,
+            } if is_sreg(*lhs) || *lhs == FPSCR => {
+                if *with_flags {
+                    Err("FPU instructions can't set the flags; compare with fpscr = cmp(a, b)")?;
+                }
+                self.gen_assign_sreg(*lhs, *ty, rhs, if_state)
+            }
+            Assign {
+                with_flags,
+                lhs:
+                    Expr {
+                        body: Body::Reg(lhs),
                         ..
                     },
                 rhs,
@@ -169,6 +185,42 @@ impl<'a, W: Write> GenCtx<'a, W> {
         with_flags: WithFlags,
         if_state: &IfState,
     ) -> Result<(), Error> {
+        match &rhs.body {
+            Body::Reg(r) if is_sreg(*r) || *r == FPSCR => {
+                if with_flags == WithFlags::Yes {
+                    Err("vmov can't set flags")?;
+                }
+                self.start_insn(if *r == FPSCR { "vmrs" } else { "vmov" }, if_state)?;
+                write!(self.w, " ")?;
+                write_reg(lhs, self.w)?;
+                write!(self.w, ", ")?;
+                write_reg(*r, self.w)?;
+                writeln!(self.w)?;
+                return Ok(());
+            }
+            // An f32's bits
+            Body::Float(bits) => {
+                let rhs = Expr {
+                    ty: rhs.ty,
+                    body: Body::Imm(*bits),
+                };
+                return self.gen_assign_reg(lhs, &rhs, with_flags, if_state);
+            }
+            Body::Cvt(a) => return self.gen_cvt(lhs, rhs.ty, a, if_state),
+            _ if float::has_sreg(rhs) => Err(format!(
+                "s registers can only be moved to {}, not used in its arithmetic",
+                reg_name(lhs)
+            ))?,
+            Body::Binop(..) | Body::Unary(UnaryOp::Neg | UnaryOp::Not, _) | Body::Intrinsic(..)
+                if self.types.get(rhs.ty).is_float() =>
+            {
+                Err(format!(
+                    "f32 arithmetic is done in s registers, not {}",
+                    reg_name(lhs)
+                ))?
+            }
+            _ => (),
+        }
         match &rhs.body {
             // A move to the same register only renames, so emits nothing.
             // Inside an IT block it is kept, since the block's instruction
@@ -624,6 +676,21 @@ impl<'a, W: Write> GenCtx<'a, W> {
             Err("cannot store to a symbol directly; load its address into a register")?;
         }
         match &rhs.body {
+            Body::Reg(r) if is_sreg(*r) => {
+                if incr != 0 {
+                    self.gen_vldm_vstm("vstmia", &[*r], addr, incr, if_state)?;
+                } else {
+                    self.gen_vldr_vstr("vstr", *r, addr, if_state)?;
+                }
+            }
+            Body::Tuple(els)
+                if els
+                    .iter()
+                    .any(|e| matches!(e.body, Body::Reg(r) if is_sreg(r))) =>
+            {
+                let regs = tuple_regs(els)?;
+                self.gen_vldm_vstm("vstmia", &regs, addr, incr, if_state)?;
+            }
             Body::Reg(r) => {
                 let insn = str_for_ty(self.types.pointee(addr.ty));
                 if insn == "str" && self.gen_single_ldm_stm("stm", *r, addr, incr, if_state)? {
@@ -654,6 +721,13 @@ impl<'a, W: Write> GenCtx<'a, W> {
         if_state: &IfState,
     ) -> Result<(), Error> {
         if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
+            if els
+                .iter()
+                .any(|e| matches!(e.body, Body::Reg(r) if is_sreg(r)))
+            {
+                let regs = tuple_regs(els)?;
+                return self.gen_vldm_vstm("vldmia", &regs, addr, 0, if_state);
+            }
             self.gen_loadstore_tuple(els, addr, 0, if_state, "ld")
         } else {
             Err("tuple load must be from deref of address")?
@@ -782,7 +856,19 @@ impl<'a, W: Write> GenCtx<'a, W> {
         rhs: &Expr,
         if_state: &IfState,
     ) -> Result<(), Error> {
-        if let Body::Reg(rn) = &base.body
+        if let Body::Reg(rd) = &rhs.body
+            && is_sreg(*rd)
+        {
+            let offset = Expr {
+                ty: TypeHandle::default(),
+                body: Body::Imm(offset as u32),
+            };
+            let addr = Expr {
+                ty: base.ty,
+                body: Body::Binop(base.clone().into(), BinOp::Add, offset.into()),
+            };
+            self.gen_vldr_vstr("vstr", *rd, &addr, if_state)?;
+        } else if let Body::Reg(rn) = &base.body
             && let Body::Reg(rd) = &rhs.body
         {
             let insn = str_for_ty(Some(self.types.get(ty)));
@@ -801,6 +887,14 @@ impl<'a, W: Write> GenCtx<'a, W> {
 
     fn gen_withflags(&mut self, expr: &Expr, if_state: &IfState) -> Result<(), Error> {
         match &expr.body {
+            // vmrs, copying the FPU's flags
+            Body::Reg(FPSCR) => {
+                self.start_insn("vmrs", if_state)?;
+                writeln!(self.w, " APSR_nzcv, fpscr")?;
+            }
+            Body::Binop(a, ..) if float::has_sreg(a) || self.types.get(a.ty).is_float() => {
+                Err("compare f32s with fpscr = cmp(a, b), then copy the flags with #(fpscr)")?
+            }
             Body::Binop(a, op, b) => {
                 let mut insn = test_insn_for_binop(*op).ok_or("unhandled binop for test")?;
                 let mut b = b.deref().clone();
@@ -833,7 +927,18 @@ impl<'a, W: Write> GenCtx<'a, W> {
         if let Body::Unary(UnaryOp::Deref, addr) = &lhs.body {
             self.gen_store(addr, rhs, incr, if_state)
         } else if let Body::Unary(UnaryOp::Deref, addr) = &rhs.body {
-            if let Body::Reg(r) = &lhs.body {
+            if let Body::Reg(r) = &lhs.body
+                && is_sreg(*r)
+            {
+                self.gen_vldm_vstm("vldmia", &[*r], addr, incr, if_state)
+            } else if let Body::Tuple(els) = &lhs.body
+                && els
+                    .iter()
+                    .any(|e| matches!(e.body, Body::Reg(r) if is_sreg(r)))
+            {
+                let regs = tuple_regs(els)?;
+                self.gen_vldm_vstm("vldmia", &regs, addr, incr, if_state)
+            } else if let Body::Reg(r) = &lhs.body {
                 let insn = ldr_for_ty(self.types.pointee(addr.ty));
                 if insn == "ldr" && self.gen_single_ldm_stm("ldm", *r, addr, incr, if_state)? {
                     return Ok(());
@@ -1125,6 +1230,9 @@ impl<'a, W: Write> GenCtx<'a, W> {
         if nums.is_empty() {
             Err(format!("{insn} needs at least one register"))?;
         }
+        if nums.iter().any(|r| is_sreg(*r)) {
+            return self.gen_vpush_vpop(&format!("v{insn}"), &nums, if_state);
+        }
         self.start_insn(insn, if_state)?;
         write!(self.w, " {{")?;
         for (i, n) in nums.iter().enumerate() {
@@ -1171,8 +1279,17 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     write!(self.w, "{c}")?;
                 }
             }
-            IfState::Then(cond) => write!(self.w, "    {insn}{}", cond.to_str())?,
-            IfState::Else(cond) => write!(self.w, "    {insn}{}", (!*cond).to_str())?,
+            // The condition goes before an FPU instruction's data types,
+            // as in vaddeq.f32
+            IfState::Then(cond) | IfState::Else(cond) => {
+                let cond = if matches!(if_state, IfState::Then(_)) {
+                    *cond
+                } else {
+                    !*cond
+                };
+                let (op, types) = insn.split_at(insn.find('.').unwrap_or(insn.len()));
+                write!(self.w, "    {op}{}{types}", cond.to_str())?
+            }
         }
         Ok(())
     }
@@ -1188,15 +1305,18 @@ impl<'a, W: Write> GenCtx<'a, W> {
     }
 }
 
+/// A core register, for bx, blx, cbz and cbnz
 fn write_var_reg(id: &str, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
-    if let Some(r) = parse_register(id) {
-        write_reg(r, w)?;
-    } else if let Some(r) = regmap.lookup(id) {
-        write_reg(r, w)?;
-    } else {
-        Err(format!("no place for {id}"))?;
+    let Some(r) = parse_register(id).or_else(|| regmap.lookup(id)) else {
+        return Err(format!("no place for {id}"))?;
+    };
+    if is_sreg(r) {
+        Err(format!(
+            "{id} is in {}, and this needs a core register",
+            reg_name(r)
+        ))?;
     }
-    Ok(())
+    write_reg(r, w)
 }
 
 fn s(with_flags: WithFlags) -> &'static str {
@@ -1338,9 +1458,21 @@ fn write_reg(reg: u8, w: &mut impl Write) -> Result<(), Error> {
         13 => write!(w, "sp")?,
         14 => write!(w, "lr")?,
         15 => write!(w, "pc")?,
+        FPSCR => write!(w, "fpscr")?,
+        _ if is_sreg(reg) => write!(w, "s{}", reg - S0)?,
         _ => write!(w, "r{reg}")?,
     }
     Ok(())
+}
+
+/// The registers of a tuple of s registers, for vldm and vstm
+fn tuple_regs(els: &[Expr]) -> Result<Vec<u8>, Error> {
+    els.iter()
+        .map(|e| match e.body {
+            Body::Reg(r) if is_sreg(r) => Ok(r),
+            _ => Err("a tuple with s registers can only have s registers".into()),
+        })
+        .collect()
 }
 
 impl From<bool> for WithFlags {

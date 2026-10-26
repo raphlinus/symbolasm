@@ -121,7 +121,7 @@ impl FnScope {
     fn dataflow(&mut self, func: &Function, ctx: &FnCtx) -> Result<(), Error> {
         let n = self.basic_blocks.len();
         let mut outs: Vec<Option<Regmap>> = vec![None; n];
-        outs[0] = Some(Regmap::entry(&func.args, ctx.abi));
+        outs[0] = Some(Regmap::entry(&func.args, ctx));
         self.ins = vec![Regmap::default(); n];
         let mut queue = VecDeque::from([1]);
         let mut queued = vec![false; n];

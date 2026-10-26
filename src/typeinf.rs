@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crate::{
     error::Error,
     globals::Globals,
+    ir::FLOAT_INTRINSICS,
     lex::TokBody,
     parse::{self, Function},
     stmt::Stmt,
@@ -158,7 +159,10 @@ impl<'a> TypeInferCtx<'a> {
                     })
                     .or_else(|| self.types.const_value(id).map(|_| TypeHandle::default()))
             }),
-            parse::Expr::Literal(_token) => Some(TypeHandle::default()),
+            parse::Expr::Literal(token) => match token.tok {
+                TokBody::Float(_) => Some(self.types.get_handle(&Type::F32)),
+                _ => Some(TypeHandle::default()),
+            },
             parse::Expr::Binop(expr, _token, _expr1) => self.try_get_type(expr),
             parse::Expr::Unary(token, expr) => match &token.tok {
                 TokBody::Asterisk => self.try_get_type(expr).and_then(|ptr| {
@@ -211,8 +215,18 @@ impl<'a> TypeInferCtx<'a> {
             parse::Expr::Slice(expr, _, _) => self.try_get_type(expr),
             parse::Expr::Tuple(_) => None,
             parse::Expr::PostInc(expr, _) => self.try_get_type(expr),
-            // lower16 and upper16 produce plain values
-            parse::Expr::Call(_, _) => Some(TypeHandle::default()),
+            parse::Expr::Call(name, args) => match name.as_ident()? {
+                "to_bits" | "f32_to_u32" => Some(self.types.get_handle(&Type::U32)),
+                "f32_to_i32" => Some(self.types.get_handle(&Type::I32)),
+                "from_bits" | "i32_to_f32" | "u32_to_f32" => {
+                    Some(self.types.get_handle(&Type::F32))
+                }
+                id if FLOAT_INTRINSICS.iter().any(|(i, _)| *i == id) => {
+                    self.try_get_type(args.first()?)
+                }
+                // lower16 and upper16 produce plain values
+                _ => Some(TypeHandle::default()),
+            },
         }
     }
 }

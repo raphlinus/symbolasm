@@ -1,0 +1,5 @@
+// error: place must be a register
+fn f(x) {
+    y @fpscr = x
+    bx lr
+}

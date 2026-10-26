@@ -1,0 +1,7 @@
+// error: vmla.f32 accumulates into its destination, so write s3 = s3 + a * b
+fn f(a: f32, b: f32) {
+    x @s0 = a
+    y @s1 = b
+    z @s3 = x + x * y
+    bx lr
+}

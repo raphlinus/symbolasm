@@ -1,0 +1,5 @@
+// error: vnmls.f32 accumulates into its destination, so write s2 = a * b - s2
+fn f(a: f32, b: f32) {
+    z @s2 = a * b - a
+    bx lr
+}

@@ -1,0 +1,6 @@
+// error: vpush registers must be consecutive and ascending
+fn f() {
+    push(s16, s18)
+    pop(s16, s18)
+    bx lr
+}

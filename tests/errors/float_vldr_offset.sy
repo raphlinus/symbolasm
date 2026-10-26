@@ -1,0 +1,5 @@
+// error: vldr offset 6 must be a multiple of 4 from -1020 to 1020
+fn f(p: *f32) {
+    x @s0 = *(p + 6)
+    bx lr
+}

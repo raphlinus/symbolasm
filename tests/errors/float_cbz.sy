@@ -1,0 +1,7 @@
+// error: x is in s0, and this needs a core register
+fn f(a: f32) {
+    x @s0 = a
+    if x == 0 goto done
+done:
+    bx lr
+}

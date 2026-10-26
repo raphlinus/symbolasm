@@ -11,17 +11,29 @@ use crate::{
     error::{Error, WithLoc},
     lex::{TokBody, Token},
     parse::{Expr, Function},
+    regmap::reg_name,
     stmt::Stmt,
     types::TypePool,
 };
 
 pub fn prepare(func: &mut Function, types: &mut TypePool) -> Result<(), Error> {
+    let mut floats = vec![];
+    for arg in &func.rets.0 {
+        let float = match &arg.ty {
+            Some(ty) => {
+                let ty = types.intern_from_ast(ty).at(&arg.var.loc)?;
+                types.get(ty).is_float()
+            }
+            None => false,
+        };
+        floats.push(float);
+    }
     let rets: Vec<(String, u8)> = func
         .rets
         .0
         .iter()
-        .enumerate()
-        .filter_map(|(i, arg)| Some((arg.var.as_ident()?.to_owned(), i as u8)))
+        .zip(func.abi.ret_regs(&floats))
+        .filter_map(|(arg, reg)| Some((arg.var.as_ident()?.to_owned(), reg)))
         .collect();
     for (stmt, loc) in func.body.iter_mut().zip(&func.locs) {
         place_rets(stmt, &rets).at(loc)?;
@@ -94,7 +106,7 @@ fn place_lhs(lhs: &mut Expr, rets: &[(String, u8)]) -> Result<(), Error> {
                 };
                 let place = Token {
                     loc: tok.loc.clone(),
-                    tok: TokBody::Identifier(format!("r{reg}")),
+                    tok: TokBody::Identifier(reg_name(*reg)),
                 };
                 let var = Expr::Ident(tok.clone());
                 *lhs = Expr::Binop(Box::new(var), at, Box::new(Expr::Ident(place)));
@@ -103,9 +115,12 @@ fn place_lhs(lhs: &mut Expr, rets: &[(String, u8)]) -> Result<(), Error> {
         Expr::Binop(var, op, place) if op.tok == TokBody::At => {
             if let Some(id) = var.as_ident()
                 && let Some((_, reg)) = rets.iter().find(|(r, _)| r == id)
-                && place.as_ident() != Some(format!("r{reg}").as_str())
+                && place.as_ident() != Some(reg_name(*reg).as_str())
             {
-                Err(format!("{id} is a result, so it's always placed in r{reg}"))?;
+                Err(format!(
+                    "{id} is a result, so it's always placed in {}",
+                    reg_name(*reg)
+                ))?;
             }
         }
         Expr::Tuple(exps) => {

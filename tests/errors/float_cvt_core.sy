@@ -1,0 +1,6 @@
+// error: vcvt converts in s registers, so the result can't go in r1
+fn f(a: f32) {
+    x @s0 = a
+    n @r1 = f32_to_i32(x)
+    bx lr
+}

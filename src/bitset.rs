@@ -4,9 +4,9 @@
 //! A basic bitset impl
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct BitSet(u32);
+pub struct BitSet(u64);
 
-pub struct BitSetIter(u32);
+pub struct BitSetIter(u64);
 
 impl BitSet {
     pub fn get(self, ix: usize) -> bool {

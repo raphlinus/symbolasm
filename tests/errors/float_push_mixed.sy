@@ -1,0 +1,6 @@
+// error: vpush takes s registers, not core registers
+fn f() {
+    push(r4, s16)
+    pop(r4, s16)
+    bx lr
+}

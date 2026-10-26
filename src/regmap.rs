@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    abi::Abi,
+    abi::{Abi, Place},
     globals::Globals,
     lex::{TokBody, Token},
     parse::{Args, Expr},
@@ -72,6 +72,30 @@ impl<'a> FnCtx<'a> {
         self.types.sig(ty)
     }
 
+    /// Whether each of the function's arguments is an f32
+    pub fn arg_floats(&self, args: &Args) -> Vec<bool> {
+        args.0
+            .iter()
+            .map(|a| {
+                let ty = a.var.as_ident().and_then(|id| self.typemap.lookup(id));
+                ty.is_some_and(|t| self.types.get(t).is_float())
+            })
+            .collect()
+    }
+
+    /// The registers the function's results go in
+    pub fn ret_regs(&self) -> Vec<u8> {
+        let floats: Vec<bool> = self
+            .rets
+            .iter()
+            .map(|r| {
+                let ty = self.typemap.lookup(r);
+                ty.is_some_and(|t| self.types.get(t).is_float())
+            })
+            .collect();
+        self.abi.ret_regs(&floats)
+    }
+
     /// Size and alignment of a variable in a stack slot
     fn layout(&self, var: &str) -> (i32, i32) {
         match self.typemap.lookup(var) {
@@ -112,11 +136,26 @@ pub struct Regmap {
     stack_lost: HashMap<String, String>,
 }
 
+/// The number of s0, the first FPU register. s0 to s31 are 32 to 63, after
+/// the core registers.
+pub const S0: u8 = 32;
+
+/// The FPU's status and control register, written `fpscr`. It never holds
+/// a variable.
+pub const FPSCR: u8 = S0 + 32;
+
+/// Whether a register is one of the FPU's s0 to s31
+pub fn is_sreg(reg: u8) -> bool {
+    (S0..FPSCR).contains(&reg)
+}
+
 pub fn reg_name(reg: u8) -> String {
     match reg {
         13 => "sp".into(),
         14 => "lr".into(),
         15 => "pc".into(),
+        FPSCR => "fpscr".into(),
+        _ if is_sreg(reg) => format!("s{}", reg - S0),
         _ => format!("r{reg}"),
     }
 }
@@ -142,11 +181,18 @@ pub fn parse_register(s: &str) -> Option<u8> {
             return Some(n);
         }
     }
+    if let Some(tail) = s.strip_prefix('s')
+        && let Ok(n) = tail.parse::<u8>()
+        && n < 32
+    {
+        return Some(S0 + n);
+    }
     match s {
         // less sure about other aliases such as ip etc. Needed for asm compat tho
         "sp" => Some(13),
         "lr" => Some(14),
         "pc" => Some(15),
+        "fpscr" => Some(FPSCR),
         _ => None,
     }
 }
@@ -260,25 +306,24 @@ pub fn ret_var(ret: &Expr) -> Option<&str> {
 impl Regmap {
     /// The state at a function's entry: arguments in registers and on the
     /// stack, and the registers to restore holding their entry values
-    pub fn entry(args: &Args, abi: Abi) -> Regmap {
+    pub fn entry(args: &Args, ctx: &FnCtx) -> Regmap {
+        let abi = ctx.abi;
         let mut map = Regmap {
             sp: Some(0),
             ..Default::default()
         };
-        for &r in abi.callee_saved() {
+        for r in abi.callee_saved() {
             map.place(&entry_var(r), r);
         }
         if abi != Abi::Wild {
             map.place(&entry_var(14), 14);
         }
-        let n_regs = abi.n_regs();
-        for (i, arg) in args.0.iter().enumerate() {
+        let floats = ctx.arg_floats(args);
+        for (arg, place) in args.0.iter().zip(abi.arg_places(&floats)) {
             if let Some(id) = arg.var.as_ident() {
-                if i < n_regs {
-                    map.place(id, i as u8);
-                } else {
-                    let pos = 4 * (i - n_regs) as i32;
-                    map.place_stack(id, pos, 4);
+                match place {
+                    Place::Reg(r) => map.place(id, r),
+                    Place::Stack(pos) => map.place_stack(id, pos, 4),
                 }
             }
         }
@@ -448,7 +493,11 @@ impl Regmap {
                 let what = format!("the call to {name}");
                 self.clobber(sig.abi, &what);
                 // The callee owns its stack arguments
-                let n_stack = call.args.len().saturating_sub(sig.abi.n_regs());
+                let places = sig.abi.arg_places(&sig.arg_floats(ctx.types));
+                let n_stack = places
+                    .iter()
+                    .filter(|p| matches!(p, Place::Stack(_)))
+                    .count();
                 if let Some(sp) = self.sp
                     && n_stack > 0
                 {
@@ -461,11 +510,12 @@ impl Regmap {
                             .insert(slot.var, format!("{what} may change its arguments"));
                     }
                 }
-                for (i, ret) in call.rets.iter().enumerate() {
+                let regs = sig.abi.ret_regs(&sig.ret_floats(ctx.types));
+                for (ret, reg) in call.rets.iter().zip(regs) {
                     if let Some(var) = ret_var(ret)
                         && parse_register(var).is_none()
                     {
-                        self.place(var, i as u8);
+                        self.place(var, reg);
                     }
                 }
             }

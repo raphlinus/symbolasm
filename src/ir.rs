@@ -5,7 +5,7 @@ use crate::consts::fold_binop;
 use crate::globals::Globals;
 use crate::lex::Token;
 use crate::parse;
-use crate::regmap::parse_register;
+use crate::regmap::{FPSCR, parse_register};
 use crate::typeinf::TypeMap;
 use crate::{
     error::Error,
@@ -42,6 +42,11 @@ pub struct Expr {
 pub enum Body {
     Reg(u8),
     Imm(u32),
+    /// An f32 constant, as its bits
+    Float(u32),
+    /// A conversion between f32 and a 32 bit integer, `x as f32`. The
+    /// expression has the target type, its operand the source type.
+    Cvt(Box<Expr>),
     Binop(Box<Expr>, BinOp, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     // a legit question is whether this should be a separate expr
@@ -160,7 +165,7 @@ impl<'a> IrCtx<'a> {
 
     pub fn lower(&mut self, stmt: &Stmt) -> Result<Ir, Error> {
         let mut ir = self.lower_raw(stmt)?;
-        canonicalize_ir(&mut ir)?;
+        canonicalize_ir(&mut ir, self.types)?;
         Ok(ir)
     }
 
@@ -276,6 +281,7 @@ impl<'a> IrCtx<'a> {
                             | Type::I16
                             | Type::U8
                             | Type::I8
+                            | Type::F32
                             | Type::Ptr(_)
                     ) {
                         return Err(format!("{id} isn't a scalar; use &{id}"))?;
@@ -298,26 +304,33 @@ impl<'a> IrCtx<'a> {
                 let body = Body::Reg(reg);
                 Ok(Expr { ty, body })
             }
-            parse::Expr::Literal(lit) => {
-                if let TokBody::Number(n) = &lit.tok {
+            parse::Expr::Literal(lit) => match &lit.tok {
+                TokBody::Number(n) => {
                     let ty = TypeHandle::default();
                     let body = Body::Imm(*n as u32);
                     Ok(Expr { ty, body })
-                } else {
-                    Err("malformed literal")?
                 }
-            }
+                TokBody::Float(bits) => {
+                    let ty = self.types.get_handle(&Type::F32);
+                    let body = Body::Float(*bits);
+                    Ok(Expr { ty, body })
+                }
+                _ => Err("malformed literal")?,
+            },
             parse::Expr::Binop(lhs, op, rhs) => {
                 if op.tok == TokBody::At {
                     // It's possible these checks move earlier
                     let Some(id) = lhs.as_ident() else {
                         return Err("placed variable must be identifier")?;
                     };
+                    if parse_register(id).is_some() {
+                        return Err(format!("{id} is a register, so it can't name a variable"))?;
+                    }
                     let ty = self.type_of_ident(id).ok_or("type lookup failed")?;
                     let Some(place) = rhs.as_ident() else {
                         return Err("place must be identifier")?;
                     };
-                    let Some(reg) = parse_register(place) else {
+                    let Some(reg) = parse_register(place).filter(|r| *r != FPSCR) else {
                         return Err("place must be a register")?;
                     };
                     let body = Body::Reg(reg);
@@ -363,8 +376,14 @@ impl<'a> IrCtx<'a> {
             parse::Expr::Cast(lhs, ty) => {
                 let mut expr = self.lower_expr(lhs)?;
                 let ty = self.types.intern_from_ast(ty)?;
-                // Here we choose not to have a separate cast expr, but that might
-                // be useful later.
+                // A cast only changes the type, so it would reinterpret
+                // between f32 and an integer, which is to_bits' job
+                if self.types.get(expr.ty).is_float() != self.types.get(ty).is_float() {
+                    return Err(
+                        "as doesn't convert between f32 and integers; use i32_to_f32(), \
+                         f32_to_i32() and co., or to_bits() and from_bits() for the bits",
+                    )?;
+                }
                 expr.ty = ty;
                 Ok(expr)
             }
@@ -531,6 +550,66 @@ impl<'a> IrCtx<'a> {
 
     fn lower_call(&mut self, name: &Token, args: &[parse::Expr]) -> Result<Expr, Error> {
         let id = name.as_ident().unwrap();
+        if let Some((insn, arity)) = FLOAT_INTRINSICS.iter().find(|(i, _)| *i == id) {
+            if args.len() != *arity {
+                return Err(format!("{insn} takes {arity} argument(s)"))?;
+            }
+            let mut irs = vec![];
+            for arg in args {
+                irs.push(self.lower_expr(arg)?);
+            }
+            // The bits of an f32 as a u32 and back, as in Rust. These only
+            // change the type; moving to or from an s register is a vmov.
+            if matches!(*insn, "to_bits" | "from_bits") {
+                let (from, to) = if *insn == "to_bits" {
+                    (Type::F32, Type::U32)
+                } else {
+                    (Type::U32, Type::F32)
+                };
+                let mut arg = irs.pop().unwrap();
+                let arg_ty = self.types.get(arg.ty);
+                if arg_ty.is_float() != from.is_float() {
+                    let what = if from.is_float() {
+                        "an f32"
+                    } else {
+                        "an integer"
+                    };
+                    return Err(format!("{insn} takes {what}"))?;
+                }
+                arg.ty = self.types.get_handle(&to);
+                return Ok(arg);
+            }
+            // Conversions, which round toward zero from f32. A rounding
+            // intrinsic inside one, as in f32_to_i32(floor(x)), is folded
+            // in by code generation.
+            let cvt = match *insn {
+                "i32_to_f32" => Some((Type::I32, Type::F32)),
+                "u32_to_f32" => Some((Type::U32, Type::F32)),
+                "f32_to_i32" => Some((Type::F32, Type::I32)),
+                "f32_to_u32" => Some((Type::F32, Type::U32)),
+                _ => None,
+            };
+            if let Some((from, to)) = cvt {
+                let mut arg = irs.pop().unwrap();
+                if self.types.get(arg.ty).is_float() != from.is_float() {
+                    let what = if from.is_float() {
+                        "an f32"
+                    } else {
+                        "an integer"
+                    };
+                    return Err(format!("{insn} takes {what}"))?;
+                }
+                if !from.is_float() {
+                    arg.ty = self.types.get_handle(&from);
+                }
+                let ty = self.types.get_handle(&to);
+                let body = Body::Cvt(arg.into());
+                return Ok(Expr { ty, body });
+            }
+            let ty = irs[0].ty;
+            let body = Body::Intrinsic(insn, irs);
+            return Ok(Expr { ty, body });
+        }
         if let Some(insn) = INSN_INTRINSICS.iter().find(|i| **i == id) {
             let arity = if matches!(*insn, "pkhbt" | "pkhtb" | "ror") {
                 2
@@ -640,14 +719,37 @@ const INSN_INTRINSICS: &[&str] = &[
     "clz", "rbit", "rev", "rev16", "revsh", "pkhbt", "pkhtb", "ror",
 ];
 
-fn canonicalize_ir(ir: &mut Ir) -> Result<(), Error> {
+/// The f32 intrinsics, named as in Rust where Rust has them, and how many
+/// arguments each takes. `to_bits` and `from_bits` only change the type.
+pub const FLOAT_INTRINSICS: &[(&str, usize)] = &[
+    ("abs", 1),
+    ("sqrt", 1),
+    ("floor", 1),
+    ("ceil", 1),
+    ("round", 1),
+    ("round_ties_even", 1),
+    ("trunc", 1),
+    ("min", 2),
+    ("cmp", 2),
+    ("cmpe", 2),
+    ("max", 2),
+    ("fma", 3),
+    ("i32_to_f32", 1),
+    ("u32_to_f32", 1),
+    ("f32_to_i32", 1),
+    ("f32_to_u32", 1),
+    ("to_bits", 1),
+    ("from_bits", 1),
+];
+
+fn canonicalize_ir(ir: &mut Ir, types: &TypePool) -> Result<(), Error> {
     match ir {
         Ir::Assign(assign) => {
-            canonicalize(&mut assign.lhs)?;
-            canonicalize(&mut assign.rhs)
+            canonicalize(&mut assign.lhs, types)?;
+            canonicalize(&mut assign.rhs, types)
         }
-        Ir::WithFlags(expr) => canonicalize(expr),
-        Ir::WithAddrUpdate(ir, _) => canonicalize_ir(ir),
+        Ir::WithFlags(expr) => canonicalize(expr, types),
+        Ir::WithAddrUpdate(ir, _) => canonicalize_ir(ir, types),
     }
 }
 
@@ -659,20 +761,60 @@ fn canonicalize_ir(ir: &mut Ir) -> Result<(), Error> {
 ///   register right operand is swapped, so the register comes first,
 /// - multiplication by a power of two becomes a left shift, so
 ///   `*(p + i * 4)` is the same as `*(p + (i << 2))`,
-/// - `(a + c1) + c2` with literals c1 and c2 becomes `a + (c1 + c2)`.
-fn canonicalize(expr: &mut Expr) -> Result<(), Error> {
+/// - `(a + c1) + c2` with literals c1 and c2 becomes `a + (c1 + c2)`,
+/// - f32 constants are folded, including their negation and conversions.
+fn canonicalize(expr: &mut Expr, types: &TypePool) -> Result<(), Error> {
     match &mut expr.body {
         Body::Binop(a, _, b) => {
-            canonicalize(a)?;
-            canonicalize(b)?;
+            canonicalize(a, types)?;
+            canonicalize(b, types)?;
         }
-        Body::Unary(_, a) | Body::Field(a, _) | Body::Slice(a, _, _) => canonicalize(a)?,
+        Body::Unary(_, a) | Body::Field(a, _) | Body::Slice(a, _, _) | Body::Cvt(a) => {
+            canonicalize(a, types)?
+        }
         Body::Tuple(els) | Body::Intrinsic(_, els) => {
             for el in els {
-                canonicalize(el)?;
+                canonicalize(el, types)?;
             }
         }
-        Body::Reg(_) | Body::Imm(_) | Body::Sym(_) | Body::SymHalf(_, _) => return Ok(()),
+        Body::Reg(_) | Body::Imm(_) | Body::Float(_) | Body::Sym(_) | Body::SymHalf(_, _) => {
+            return Ok(());
+        }
+    }
+    if let Body::Unary(UnaryOp::Neg, a) = &expr.body
+        && let Body::Float(bits) = a.body
+    {
+        expr.body = Body::Float(bits ^ 0x8000_0000);
+        return Ok(());
+    }
+    // A conversion of a constant, which rounds toward zero, as vcvt does
+    if let Body::Cvt(a) = &expr.body {
+        match a.body {
+            Body::Float(bits) => {
+                let x = f32::from_bits(bits);
+                let signed = types.get(expr.ty).is_signed();
+                let (lo, hi) = if signed {
+                    (i32::MIN as f32, -(i32::MIN as f32))
+                } else {
+                    (0.0, 4294967296.0)
+                };
+                if x.is_nan() || x.trunc() < lo || x.trunc() >= hi {
+                    Err(format!("{x:?} is out of range for the conversion"))?;
+                }
+                let n = if signed { x as i32 as u32 } else { x as u32 };
+                expr.body = Body::Imm(n);
+            }
+            Body::Imm(n) => {
+                let x = if types.get(a.ty).is_signed() {
+                    n as i32 as f32
+                } else {
+                    n as f32
+                };
+                expr.body = Body::Float(x.to_bits());
+            }
+            _ => (),
+        }
+        return Ok(());
     }
     if let Body::Unary(op @ (UnaryOp::Not | UnaryOp::Neg), a) = &expr.body
         && let Body::Imm(n) = a.body
@@ -690,6 +832,18 @@ fn canonicalize(expr: &mut Expr) -> Result<(), Error> {
     };
     if let (Body::Imm(x), Body::Imm(y)) = (&a.body, &b.body) {
         expr.body = Body::Imm(fold_binop(*x, *op, *y)?);
+        return Ok(());
+    }
+    if let (Body::Float(x), Body::Float(y)) = (&a.body, &b.body) {
+        let (x, y) = (f32::from_bits(*x), f32::from_bits(*y));
+        let z = match op {
+            BinOp::Add => x + y,
+            BinOp::Sub => x - y,
+            BinOp::Mul => x * y,
+            BinOp::Div => x / y,
+            _ => Err("only + - * / apply to f32")?,
+        };
+        expr.body = Body::Float(z.to_bits());
         return Ok(());
     }
     let commutative = matches!(

@@ -1,0 +1,6 @@
+// error: vadd.f32 has no immediate form; load the constant into an s register
+fn f(a: f32) {
+    x @s0 = a
+    x = x + 1.0
+    bx lr
+}

@@ -1,0 +1,156 @@
+// f32 arithmetic in the FPU's s registers. f32 arguments and results are
+// in s registers from s0, and the others in core registers from r0
+// (AAPCS-VFP, as in Rust's eabihf targets).
+
+struct Particle {
+    x: f32
+    y: f32
+    mass: f32
+}
+
+static SCALE: [f32; 3] = [1.5, -0.25, 0.1]
+static HALF: f32 = 0.5
+
+fn arith(a: f32, b: f32) -> c: f32 {
+    z @s2 = a + b
+    z = z - a
+    z = z * b
+    z = z / a
+    z = -z
+    z += a * b
+    z -= a * b
+    w @s3 = -(a * b)
+    w = fma(a, b, w)
+    w = fma(-a, b, w)
+    w = fma(-a, b, -w)
+    w = fma(a, b, -w)
+    z = -z - a * b
+    z = a * b - z
+    z = -z + a * b
+    c = w
+    bx lr
+}
+
+fn consts() -> c: f32 {
+    one @s1 = 1.0
+    small @s2 = -0.125
+    tenth @s3 = 0.1
+    zero @s4 = 0.0
+    two @s5 = 1.0 + 1.0
+    five @s6 = u32_to_f32(5)
+    h @s7 = HALF
+    c = 2.5
+    bits @r0 = 2.5
+    bx lr
+}
+
+fn intrinsics(x: f32) -> c: f32 {
+    y @s1 = abs(x)
+    y = sqrt(y)
+    y = floor(x)
+    y = ceil(x)
+    y = round(x)
+    y = round_ties_even(x)
+    y = trunc(x)
+    z @s2 = min(x, y)
+    c = max(z, x)
+    bx lr
+}
+
+// Conversions are between f32 and an i32 or u32 in an s register. A
+// rounding intrinsic inside one is the same instruction.
+fn convert(n: i32, u: u32) -> (r: i32, q: u32) {
+    ns @s0 = n
+    us @s1 = u
+    f @s2 = i32_to_f32(ns)
+    g @s3 = u32_to_f32(us)
+    i @s4 = f32_to_i32(f)
+    j @s5 = f32_to_u32(g)
+    k @s6 = f32_to_i32(floor(f))
+    k = f32_to_i32(ceil(f))
+    k = f32_to_i32(round(f))
+    k = f32_to_i32(round_ties_even(f))
+    k = f32_to_i32(trunc(f))
+    r = i
+    q = j
+    bx lr
+}
+
+// The bits of an f32, moved to and from a core register
+fn bits(x: f32) -> y: f32 {
+    b @r0 = to_bits(x)
+    b = b ^ 0x8000_0000
+    y = from_bits(b)
+    bx lr
+}
+
+fn memory(p: *Particle, q: *f32) {
+    x @s0 = p.x
+    y @s1 = p.y
+    p.mass = x
+    v @s2 = *q
+    *(q + 8) = v
+    v = *(q - 4)
+    (a @s4, b @s5) = *q
+    *q = (a, b)
+    v = *q++
+    *q++ = v
+    (a, b) = *q++
+    *q++ = (a, b)
+    s @r2 = &SCALE
+    v = *(s + 4)
+    bx lr
+}
+
+// A compare sets the FPU's flags, and #(fpscr) copies them for conditions
+fn compare(x: f32, y: f32, n) -> c: f32 {
+    fpscr = cmp(x, y)
+    #(fpscr)
+    if #gt {
+        x = y
+    }
+    fpscr = cmpe(x, 0.0)
+    #(fpscr)
+    if #mi goto neg
+    #(n - 0)
+    if #eq {
+        fpscr = cmp(x, y)
+    }
+    c = x
+    bx lr
+neg:
+    c = y
+    bx lr
+}
+
+// Round toward zero, then put the mode back
+fn round_mode() {
+    old @r0 = fpscr
+    mode @r1 = old | 3 << 22
+    fpscr = mode
+    fpscr = old
+    bx lr
+}
+
+// Arguments of each kind take registers in order: p in r0, k in s0, n in
+// r1, and the result in s0
+symbol scale: fn(p: *f32, k: f32, n: u32) -> f32
+
+// s16-s31 are callee-saved, and a call clobbers s0-s15
+fn saved(p: *f32, n: u32, a: f32) -> r: f32 {
+    push(r4, lr)
+    push(s16, s17)
+    keep @s16 = a
+    r = call scale(p, a, n)
+    r = r + keep
+    pop(s16, s17)
+    pop(r4, pc)
+}
+
+fn on_stack(x: f32) {
+    sp -= 8 (f: f32, g)
+    sp.f = x
+    y @s1 = sp.f
+    sp += 8
+    bx lr
+}

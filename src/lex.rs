@@ -22,6 +22,8 @@ pub enum TokBody {
     Newline,
     Identifier(String),
     Number(i64),
+    /// A float literal, `1.5`, as the bits of an f32
+    Float(u32),
     /// A string literal, without escapes
     Str(String),
     Comma,
@@ -285,6 +287,41 @@ pub fn tokenize(src: &str) -> Result<TokBuf, Error> {
                         break;
                     }
                     end += 1;
+                }
+                // A float has digits after its point, so 0..4 is a range
+                let bytes = src.as_bytes();
+                if end + 1 < src.len()
+                    && bytes[end] == b'.'
+                    && bytes[end + 1].is_ascii_digit()
+                    && !src[ix..end].starts_with("0x")
+                {
+                    end += 1;
+                    while end < src.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'_') {
+                        end += 1;
+                    }
+                    if end < src.len() && bytes[end] == b'e' {
+                        end += 1;
+                        if end < src.len() && matches!(bytes[end], b'+' | b'-') {
+                            end += 1;
+                        }
+                        while end < src.len() && bytes[end].is_ascii_digit() {
+                            end += 1;
+                        }
+                    }
+                    if end < src.len() && bytes[end].is_ascii_alphabetic() {
+                        return Err("trailing alphabetic in number".into()).at(&loc);
+                    }
+                    let text = src[ix..end].replace('_', "");
+                    let val: f32 = text
+                        .parse()
+                        .map_err(|_| Error::from(format!("malformed float {text}")))
+                        .at(&loc)?;
+                    if val.is_infinite() {
+                        return Err(format!("{text} is too large for an f32").into()).at(&loc);
+                    }
+                    tokens.push(Token::new(loc, TokBody::Float(val.to_bits())));
+                    ix = end;
+                    continue;
                 }
                 tokens.push(Token::new(loc, TokBody::Number(val)));
                 ix = end;
