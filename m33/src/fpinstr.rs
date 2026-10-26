@@ -41,7 +41,9 @@ impl Cpu {
         if inst_2 & 0xe00 != 0xa00 {
             todo!("coprocessor inst {inst:04x} {inst_2:04x} not implemented");
         }
-        if inst_2 & 0xf00 == 0xb00 {
+        let double = inst_2 & 0xf00 == 0xb00;
+        // A single precision FPU only loads, stores and moves d registers
+        if double && (inst & 0xf00 == 0xe00 || inst & 0xfe0 == 0xc40) {
             todo!("double precision inst {inst:04x} {inst_2:04x} not implemented");
         }
         if inst & 0xf00 == 0xe00 {
@@ -53,7 +55,7 @@ impl Cpu {
         } else if inst & 0xfe0 == 0xc40 {
             self.fp_transfer_64(inst, inst_2);
         } else {
-            self.fp_load_store(inst, inst_2);
+            self.fp_load_store(inst, inst_2, double);
         }
     }
 
@@ -231,11 +233,22 @@ impl Cpu {
         }
     }
 
-    /// vldr, vstr, vldm, vstm, vpush and vpop
-    fn fp_load_store(&mut self, inst: u16, inst_2: u16) {
+    /// vldr, vstr, vldm, vstm, vpush and vpop, of s registers or (when
+    /// double) d registers, each a pair of s registers
+    fn fp_load_store(&mut self, inst: u16, inst_2: u16, double: bool) {
         let rn = (inst & 0xf) as usize;
         let load = inst & 0x10 != 0;
-        let d = ((((inst_2 >> 12) & 0xf) << 1) | ((inst >> 6) & 1)) as usize;
+        let vd = ((inst_2 >> 12) & 0xf) as usize;
+        let bit_d = ((inst >> 6) & 1) as usize;
+        // The first s register
+        let d = if double {
+            if bit_d != 0 {
+                panic!("d16-d31 don't exist, in inst {inst:04x} {inst_2:04x}");
+            }
+            vd << 1
+        } else {
+            (vd << 1) | bit_d
+        };
         let imm8 = (inst_2 & 0xff) as u32;
         let up = inst & 0x80 != 0;
         let pre = inst & 0x100 != 0;
@@ -253,13 +266,19 @@ impl Cpu {
             } else {
                 base.wrapping_sub(imm8 * 4)
             };
-            if load {
-                self.regs.s[d] = self.load_u32(addr);
-            } else {
-                self.store_u32(addr, self.regs.s[d]);
+            self.check_aligned(addr);
+            for i in 0..1 + double as usize {
+                let addr = addr.wrapping_add(4 * i as u32);
+                if load {
+                    self.regs.s[d + i] = self.load_u32(addr);
+                } else {
+                    self.store_u32(addr, self.regs.s[d + i]);
+                }
             }
             return;
         }
+        // For d registers imm8 is twice their number, so it's the number of
+        // words either way
         // Multiple: increment after, or decrement before with writeback
         let n = imm8;
         let start = match (pre, up) {
@@ -270,6 +289,7 @@ impl Cpu {
         if d + n as usize > 32 || n == 0 {
             panic!("bad register list in inst {inst:04x} {inst_2:04x}");
         }
+        self.check_aligned(start);
         for i in 0..n {
             let addr = start.wrapping_add(4 * i);
             let reg = d + i as usize;

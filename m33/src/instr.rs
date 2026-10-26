@@ -402,6 +402,7 @@ impl Cpu {
     fn inst_c(&mut self, inst: u16) {
         let rn = ((inst >> 8) & 7) as usize;
         let mut addr = self.regs.r[rn];
+        self.check_aligned(addr);
         if (inst & 0x800) == 0 {
             // STMIA (T1 encoding)
             for i in 0..8 {
@@ -491,6 +492,7 @@ impl Cpu {
             _ => todo!("inst {inst:04x} {inst_2:04x} not implemented"),
         };
         let mut addr = start;
+        self.check_aligned(addr);
         if load {
             let mut vals = [0; 16];
             for (i, val) in vals.iter_mut().enumerate() {
@@ -543,6 +545,7 @@ impl Cpu {
                 base.wrapping_sub(imm)
             };
             let addr = if index { offset_addr } else { base };
+            self.check_aligned(addr);
             if inst & 0x10 != 0 {
                 self.regs.r[rt] = self.load_u32(addr);
                 self.regs.r[rd] = self.load_u32(addr.wrapping_add(4));
@@ -556,6 +559,7 @@ impl Cpu {
         } else if op1 == 0 {
             // LDREX, STREX
             let addr = rrn.wrapping_add((inst_2 & 0xff) as u32 * 4);
+            self.check_aligned(addr);
             if op2 == 1 {
                 self.regs.r[rt] = self.load_u32(addr);
                 self.exclusive = true;

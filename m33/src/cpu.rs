@@ -78,6 +78,18 @@ impl Cpu {
         a
     }
 
+    /// The accesses that must be word aligned (LDM and STM, LDRD and STRD,
+    /// the exclusives, and the FPU's loads and stores) fault when they
+    /// aren't, even with unaligned access enabled.
+    pub(crate) fn check_aligned(&self, addr: u32) {
+        if addr & 3 != 0 {
+            panic!(
+                "unaligned access at pc {:#x}: address {addr:#x} must be word aligned",
+                self.regs.r[15]
+            );
+        }
+    }
+
     pub fn load_u8(&self, addr: u32) -> u8 {
         self.mem[self.check(addr, 1)]
     }
@@ -106,6 +118,7 @@ impl Cpu {
     }
 
     fn pop(&mut self) -> u32 {
+        self.check_aligned(self.regs.r[13]);
         let result = self.load_u32(self.regs.r[13]);
         self.regs.r[13] += 4;
         result
@@ -113,6 +126,7 @@ impl Cpu {
 
     fn push(&mut self, val: u32) {
         self.regs.r[13] -= 4;
+        self.check_aligned(self.regs.r[13]);
         self.store_u32(self.regs.r[13], val);
     }
 

@@ -355,6 +355,14 @@ FP_TEMPLATES = [
     ("vpop {s16-s17}", "fpmem"),
     # in an IT block
     ("itte gt; vmovgt.f32 s0, s1; vaddgt.f32 s2, s3, s4; vmovle s0, r1", "fpcore"),
+    # d registers, as pairs of s registers
+    ("vpush {d8}", "fpmem"),
+    ("vpush {d8-d10}", "fpmem"),
+    ("vpop {d8-d9}", "fpmem"),
+    ("vldr d0, [r1, #8]", "fpmem"),
+    ("vstr d7, [r1, #-1020]", "fpmem"),
+    ("vldmia r1!, {d2-d3}", "fpmem"),
+    ("vstmdb r1!, {d1}", "fpmem"),
 ]
 
 # f32 bits: zeros, ones, ties for rounding, infinities, NaNs (quiet,

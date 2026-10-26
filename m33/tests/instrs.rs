@@ -57,9 +57,10 @@ fn run(line: &str, mem: &[u8]) -> Result<(), String> {
     mem[CODE as usize..][..code.len()].copy_from_slice(&code);
     let mut expected_mem = mem.clone();
     for w in writes.split_whitespace() {
-        let v: Vec<u32> = w
+        // A store of a d register is one 8 byte write
+        let v: Vec<u64> = w
             .split(':')
-            .map(|x| u32::from_str_radix(x, 16).unwrap())
+            .map(|x| u64::from_str_radix(x, 16).unwrap())
             .collect();
         let (addr, size, val) = (v[0] as usize, v[1] as usize, v[2]);
         expected_mem[addr..][..size].copy_from_slice(&val.to_le_bytes()[..size]);
@@ -202,4 +203,35 @@ fn run_all(text: &str) {
             report.join("\n")
         );
     }
+}
+
+/// Run one instruction, given as halfwords, with r0 at `addr`.
+fn run_at(code: &[u16], addr: u32) {
+    let mut mem = vec![0; MEM_SIZE];
+    for (i, h) in code.iter().enumerate() {
+        mem[CODE as usize + 2 * i..][..2].copy_from_slice(&h.to_le_bytes());
+    }
+    let mut cpu = Cpu::new(mem);
+    cpu.regs.r[0] = addr;
+    cpu.regs.r[15] = CODE;
+    cpu.step_instr();
+}
+
+#[test]
+fn aligned_ldm() {
+    // ldm r0!, {r1, r2}
+    run_at(&[0xc806], 0x400);
+}
+
+#[test]
+#[should_panic(expected = "unaligned access")]
+fn unaligned_ldm() {
+    run_at(&[0xc806], 0x402);
+}
+
+#[test]
+#[should_panic(expected = "unaligned access")]
+fn unaligned_vldr() {
+    // vldr s0, [r0]
+    run_at(&[0xed90, 0x0a00], 0x401);
 }
