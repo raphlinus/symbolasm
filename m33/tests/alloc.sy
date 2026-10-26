@@ -1,7 +1,8 @@
 // The linked list allocator from symbolasm's alloc2.sy, transliterated
 // into syntax that compiles today: placements are relabeled with a
 // self-move (elided), and results are returned in r0 by convention.
-// free has the merge cases filled in.
+// free has the merge cases filled in. Both use r4-r7 freely, so they're
+// loose, which the test, calling them directly, doesn't mind.
 //
 // The list is sorted by address and starts at a dummy head with size 0,
 // outside the heap. Holes are at least 8 bytes, 8 aligned.
@@ -13,7 +14,7 @@ struct Hole {
 
 // Allocate size bytes aligned to align (a power of two). Returns the block
 // in r0, or 0 if there's no room.
-fn alloc(head: *Hole, size: u32, align: u32) {
+fn[abi = loose] alloc(head: *Hole, size: u32, align: u32) {
     cur @r3 = head.next
     size += 7
     #(size &= !7)
@@ -79,7 +80,7 @@ candidate2:
 }
 
 // Free a block allocated with this size.
-fn free(head: *Hole, ptr: *Hole, size: u32) {
+fn[abi = loose] free(head: *Hole, ptr: *Hole, size: u32) {
     size += 7
     #(size &= !7)
     if #eq {
