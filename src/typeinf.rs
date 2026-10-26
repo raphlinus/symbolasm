@@ -129,6 +129,22 @@ impl<'a> TypeInferCtx<'a> {
     }
 
     fn infer_assign(&mut self, lhs: &parse::Expr, rhs: &parse::Expr) -> bool {
+        // A multiple load, `(a, b) = *p`: each gets the pointee type
+        if let parse::Expr::Tuple(vars) = lhs {
+            let Some(ty) = self.try_get_type(rhs) else {
+                return false;
+            };
+            let mut changed = false;
+            for var in vars {
+                if let Some(id) = assigned_var(var)
+                    && !self.map.map.contains_key(id)
+                {
+                    self.map.map.insert(id.to_owned(), ty);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
         let Some(id) = assigned_var(lhs) else {
             return false;
         };

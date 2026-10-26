@@ -97,6 +97,9 @@ fn memory(p: *Particle, q: *f32) {
     *q++ = v
     (a, b) = *q++
     *q++ = (a, b)
+    // a multiple load gives each the pointee type
+    (c @s6, d @s7) = *q
+    v = c + d
     s @r2 = &SCALE
     v = *(s + 4)
     bx lr

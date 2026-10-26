@@ -104,6 +104,8 @@ memory:
     vstmia r1!, {s2}
     vldmia r1!, {s4, s5}
     vstmia r1!, {s4, s5}
+    vldmia r1, {s6, s7}
+    vadd.f32 s2, s6, s7
     ldr r2, =SCALE
     vldr s2, [r2, #4]
     bx lr
