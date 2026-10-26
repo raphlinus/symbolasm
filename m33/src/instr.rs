@@ -470,6 +470,8 @@ impl Cpu {
             self.load_store_multiple(inst, inst_2);
         } else if inst & 0xe40 == 0x840 {
             self.load_store_dual_exclusive(inst, inst_2);
+        } else if inst & 0xc00 == 0xc00 {
+            self.fp_instr(inst, inst_2);
         } else {
             todo!("inst {inst:04x} {inst_2:04x} not implemented");
         }
@@ -624,7 +626,9 @@ impl Cpu {
     fn inst_f(&mut self, inst: u16) {
         let inst_2 = self.load_u16(self.regs.r[15]);
         self.regs.r[15] += 2;
-        if inst & 0x800 == 0 && (inst_2 & 0x8000) != 0 {
+        if inst & 0xff00 == 0xfe00 {
+            self.fp_unconditional(inst, inst_2);
+        } else if inst & 0x800 == 0 && (inst_2 & 0x8000) != 0 {
             self.branch_misc(inst, inst_2);
         } else if inst & 0xe00 == 0x800 {
             self.load_store_single(inst, inst_2);

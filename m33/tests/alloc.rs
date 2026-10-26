@@ -10,45 +10,17 @@
 //! alloc.sy is compiled with the symbolasm in this workspace; building
 //! also needs arm-none-eabi binutils.
 
-use std::{collections::HashMap, path::PathBuf, process::Command};
+use std::collections::HashMap;
 
 use m33::{Cpu, load_elf};
+
+mod common;
 
 const TEXT: u32 = 0x1000;
 const HEAD: u32 = 0x8000;
 const HEAP: u32 = 0x10000;
 const HEAP_SIZE: u32 = 0x10000;
 const MEM_SIZE: usize = 0x40000;
-
-fn build() -> Vec<u8> {
-    let dir = std::env::temp_dir().join(format!("m33-alloc-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = manifest_dir.join("tests/alloc.sy");
-    let out = Command::new(env!("CARGO"))
-        .args(["run", "-q", "-p", "symbolasm", "--"])
-        .arg(&src)
-        .current_dir(manifest_dir.parent().unwrap())
-        .output()
-        .expect("running symbolasm");
-    assert!(
-        out.status.success(),
-        "symbolasm failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    std::fs::write(dir.join("alloc.s"), &out.stdout).unwrap();
-    let run = |cmd: &mut Command| assert!(cmd.status().unwrap().success(), "{cmd:?} failed");
-    run(Command::new("arm-none-eabi-as")
-        .args(["-mcpu=cortex-m33", "-o"])
-        .arg(dir.join("alloc.o"))
-        .arg(dir.join("alloc.s")));
-    run(Command::new("arm-none-eabi-ld")
-        .arg(format!("-Ttext={TEXT:#x}"))
-        .args(["-e", "alloc", "-o"])
-        .arg(dir.join("alloc.elf"))
-        .arg(dir.join("alloc.o")));
-    std::fs::read(dir.join("alloc.elf")).unwrap()
-}
 
 #[derive(Clone, Copy, Debug)]
 enum Op {
@@ -245,7 +217,7 @@ fn shrink(elf: &[u8], mut ops: Vec<Op>) -> (Vec<Op>, usize, String) {
 
 #[test]
 fn random_alloc_free() {
-    let elf = build();
+    let elf = common::build("alloc", TEXT, "alloc");
     for seed in 0..2000 {
         let ops = random_ops(seed, 300);
         if run(&elf, &ops).is_err() {

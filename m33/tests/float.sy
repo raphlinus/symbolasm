@@ -1,0 +1,78 @@
+// f32 functions for tests/float.rs, which runs them on the emulator and
+// checks the results against the same arithmetic on the host.
+
+fn dot(p: *f32, q: *f32, n: u32) -> r: f32 {
+    r = 0.0
+    loop {
+        a @s1 = *p++
+        b @s2 = *q++
+        r += a * b
+        #(n -= 1)
+        if #ne goto loop
+    }
+    bx lr
+}
+
+// c[0] + c[1] x + c[2] x^2 + c[3] x^3, by Horner's rule with fused
+// multiply-adds
+fn poly(x: f32, c: *f32) -> r: f32 {
+    u @s1 = *(c + 12)
+    t @s2 = *(c + 8)
+    t = fma(u, x, t)
+    u = *(c + 4)
+    u = fma(t, x, u)
+    t = *c
+    t = fma(u, x, t)
+    r = t
+    bx lr
+}
+
+// A NaN is unordered, so neither condition holds and it passes through
+fn clamp(x: f32, lo: f32, hi: f32) -> r: f32 {
+    fpscr = cmp(x, lo)
+    #(fpscr)
+    if #mi {
+        x = lo
+    }
+    fpscr = cmp(x, hi)
+    #(fpscr)
+    if #gt {
+        x = hi
+    }
+    r = x
+    bx lr
+}
+
+fn floor_int(x: f32) -> r: i32 {
+    i @s1 = f32_to_i32(floor(x))
+    r = i
+    bx lr
+}
+
+fn scale(n: i32, k: f32) -> r: f32 {
+    ns @s1 = n
+    f @s2 = i32_to_f32(ns)
+    r = f * k
+    bx lr
+}
+
+fn nmac(x: f32, a: f32, b: f32) -> r: f32 {
+    x = -x - a * b
+    x = a * b - x
+    r = x / b
+    bx lr
+}
+
+// k is kept in s16 across the call, which clobbers s0-s15
+fn scaled_norm(p: *f32, n: u32, k: f32) -> r: f32 {
+    push(r4, lr)
+    push(s16, s17)
+    keep @s16 = k
+    m @r2 = n
+    q @r1 = p
+    r = call dot(p, q, m)
+    r = sqrt(r)
+    r = r * keep
+    pop(s16, s17)
+    pop(r4, pc)
+}

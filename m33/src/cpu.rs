@@ -18,6 +18,9 @@ const CALL_SENTINEL: u32 = 0xffff_fff0;
 pub struct Regs {
     pub r: [u32; 16],
     pub psr: u32,
+    /// The FPU's s0-s31, as bits
+    pub s: [u32; 32],
+    pub fpscr: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -44,7 +47,8 @@ impl Cpu {
     }
 
     /// Call the function at `addr` with up to four arguments in r0-r3, and
-    /// return r0 when it returns with bx lr (or pop pc).
+    /// return r0 when it returns with bx lr (or pop pc). f32 arguments and
+    /// results are in `regs.s`, set before the call and read after.
     pub fn call(&mut self, addr: u32, args: &[u32]) -> u32 {
         for (i, arg) in args.iter().enumerate() {
             self.regs.r[i] = *arg;

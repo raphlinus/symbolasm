@@ -3,13 +3,16 @@
 //! Each line of tests/vectors.txt, made by tests/gen_vectors.py with
 //! unicorn's Cortex-M33 model, is a short instruction sequence with a
 //! starting state and the expected final registers, flags and memory
-//! writes. All cases run, and the failures are reported together.
+//! writes. All cases run, and the failures are reported together. The FPU
+//! cases, in tests/fp_vectors.txt, also have s0-s31 and FPSCR.
 
 use m33::Cpu;
 
 const MEM_SIZE: usize = 0x10000;
 const CODE: u32 = 0x8000;
 const NZCV: u32 = 0xf000_0000;
+/// FPSCR without the cumulative exception flags, which m33 doesn't model
+const FPSCR_MASK: u32 = !0x9f;
 
 /// The memory fill, matching pattern() in gen_vectors.py.
 fn pattern() -> Vec<u8> {
@@ -33,8 +36,12 @@ fn hex_words(s: &str) -> Vec<u32> {
 /// Run one case, returning a description of what differs.
 fn run(line: &str, mem: &[u8]) -> Result<(), String> {
     let f: Vec<&str> = line.split(" | ").map(str::trim).collect();
-    let [asm, code, steps, init, want, writes] = f[..] else {
-        panic!("bad vector line: {line}");
+    let (asm, code, steps, init, fp_init, want, fp_want, writes) = match f[..] {
+        [asm, code, steps, init, want, writes] => (asm, code, steps, init, "", want, "", writes),
+        [asm, code, steps, init, fp_init, want, fp_want, writes] => {
+            (asm, code, steps, init, fp_init, want, fp_want, writes)
+        }
+        _ => panic!("bad vector line: {line}"),
     };
     let code: Vec<u8> = (0..code.len())
         .step_by(2)
@@ -43,6 +50,8 @@ fn run(line: &str, mem: &[u8]) -> Result<(), String> {
     let steps: usize = steps.parse().unwrap();
     let init = hex_words(init);
     let want = hex_words(want);
+    let fp_init = hex_words(fp_init);
+    let fp_want = hex_words(fp_want);
 
     let mut mem = mem.to_vec();
     mem[CODE as usize..][..code.len()].copy_from_slice(&code);
@@ -60,6 +69,10 @@ fn run(line: &str, mem: &[u8]) -> Result<(), String> {
     cpu.regs.r[..15].copy_from_slice(&init[..15]);
     cpu.regs.r[15] = CODE;
     cpu.regs.psr = init[15];
+    if !fp_init.is_empty() {
+        cpu.regs.s.copy_from_slice(&fp_init[..32]);
+        cpu.regs.fpscr = fp_init[32];
+    }
     let branch = is_branch(asm);
     let end = CODE + code.len() as u32;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -100,6 +113,20 @@ fn run(line: &str, mem: &[u8]) -> Result<(), String> {
             want[16] >> 28
         ));
     }
+    if !fp_want.is_empty() {
+        for i in 0..32 {
+            if cpu.regs.s[i] != fp_want[i] {
+                diffs.push(format!("s{i} {:#x}, want {:#x}", cpu.regs.s[i], fp_want[i]));
+            }
+        }
+        if cpu.regs.fpscr & FPSCR_MASK != fp_want[32] {
+            diffs.push(format!(
+                "fpscr {:#x}, want {:#x}",
+                cpu.regs.fpscr & FPSCR_MASK,
+                fp_want[32]
+            ));
+        }
+    }
     let mut bad_mem = 0;
     let mut first = None;
     for a in 0..MEM_SIZE {
@@ -128,8 +155,16 @@ fn is_branch(asm: &str) -> bool {
 
 #[test]
 fn vectors() {
+    run_all(include_str!("vectors.txt"));
+}
+
+#[test]
+fn fp_vectors() {
+    run_all(include_str!("fp_vectors.txt"));
+}
+
+fn run_all(text: &str) {
     let mem = pattern();
-    let text = include_str!("vectors.txt");
     // Quiet the default hook, so unimplemented instructions don't print
     // a panic message each.
     std::panic::set_hook(Box::new(|_| {}));

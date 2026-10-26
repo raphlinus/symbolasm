@@ -12,12 +12,17 @@ Memory is 64 KB filled with a fixed pattern (see pattern()), with the code at
 0x8000. In "mem" cases the registers are word aligned addresses in
 0x400..0x1400, so loads and stores land in the data area below the code.
 
+The FPU cases, in tests/fp_vectors.txt, also have the starting and final
+s0-s31 and FPSCR, in two more fields after the core registers.
+
 Needs arm-none-eabi-as and `pip install unicorn`. Run from the m33
-directory: python3 tests/gen_vectors.py > tests/vectors.txt
+directory: python3 tests/gen_vectors.py > tests/vectors.txt, and
+python3 tests/gen_vectors.py fp > tests/fp_vectors.txt
 """
 
 import os
 import random
+import struct
 import subprocess
 import sys
 import tempfile
@@ -267,6 +272,101 @@ TEMPLATES = [
     ("nop.w", "alu"),
 ]
 
+# FPU cases. Modes: "fp" random floats, "fprm" the same with a random
+# rounding mode in FPSCR, "fpmem" floats with addresses in the core
+# registers, "fpcore" floats with random core registers.
+FP_TEMPLATES = [
+    # arithmetic
+    ("vadd.f32 s0, s1, s2", "fp"),
+    ("vsub.f32 s3, s4, s5", "fp"),
+    ("vmul.f32 s0, s1, s2", "fp"),
+    ("vnmul.f32 s0, s1, s2", "fp"),
+    ("vdiv.f32 s0, s1, s2", "fp"),
+    ("vadd.f32 s31, s30, s17", "fp"),
+    ("vmla.f32 s0, s1, s2", "fp"),
+    ("vmls.f32 s0, s1, s2", "fp"),
+    ("vnmla.f32 s0, s1, s2", "fp"),
+    ("vnmls.f32 s0, s1, s2", "fp"),
+    ("vfma.f32 s0, s1, s2", "fp"),
+    ("vfms.f32 s0, s1, s2", "fp"),
+    ("vfnma.f32 s0, s1, s2", "fp"),
+    ("vfnms.f32 s0, s1, s2", "fp"),
+    ("vfma.f32 s0, s0, s0", "fp"),
+    # one operand
+    ("vmov.f32 s0, s1", "fp"),
+    ("vabs.f32 s0, s1", "fp"),
+    ("vneg.f32 s0, s1", "fp"),
+    ("vsqrt.f32 s0, s1", "fp"),
+    ("vmov.f32 s0, #1.0", "fp"),
+    ("vmov.f32 s9, #-0.125", "fp"),
+    ("vmov.f32 s0, #31.0", "fp"),
+    ("vmov.f32 s0, #0.1875", "fp"),
+    # rounding and conversions
+    ("vrintz.f32 s0, s1", "fp"),
+    ("vrintr.f32 s0, s1", "fprm"),
+    ("vrintx.f32 s0, s1", "fprm"),
+    ("vrinta.f32 s0, s1", "fprm"),
+    ("vrintn.f32 s0, s1", "fp"),
+    ("vrintp.f32 s0, s1", "fp"),
+    ("vrintm.f32 s0, s1", "fprm"),
+    ("vcvt.f32.s32 s0, s1", "fprm"),
+    ("vcvt.f32.u32 s0, s1", "fprm"),
+    ("vcvt.s32.f32 s0, s1", "fprm"),
+    ("vcvt.u32.f32 s0, s1", "fp"),
+    ("vcvtr.s32.f32 s0, s1", "fprm"),
+    ("vcvtr.u32.f32 s0, s1", "fprm"),
+    ("vcvta.s32.f32 s0, s1", "fp"),
+    ("vcvtn.u32.f32 s0, s1", "fp"),
+    ("vcvtp.s32.f32 s0, s1", "fp"),
+    ("vcvtm.u32.f32 s0, s1", "fp"),
+    ("vmaxnm.f32 s0, s1, s2", "fp"),
+    ("vminnm.f32 s0, s1, s2", "fp"),
+    ("vseleq.f32 s0, s1, s2", "fp"),
+    ("vselvs.f32 s0, s1, s2", "fp"),
+    ("vselge.f32 s0, s1, s2", "fp"),
+    ("vselgt.f32 s0, s1, s2", "fp"),
+    # compares and FPSCR
+    ("vcmp.f32 s1, s2", "fp"),
+    ("vcmpe.f32 s1, s2", "fp"),
+    ("vcmp.f32 s1, #0", "fp"),
+    ("vcmp.f32 s1, s2; vmrs APSR_nzcv, fpscr", "fp"),
+    ("vmrs r0, fpscr", "fpcore"),
+    ("vmsr fpscr, r0", "fpcore"),
+    # moves to and from core registers
+    ("vmov s0, r1", "fpcore"),
+    ("vmov r0, s1", "fpcore"),
+    ("vmov s17, r9", "fpcore"),
+    ("vmov s0, s1, r1, r2", "fpcore"),
+    ("vmov r0, r1, s4, s5", "fpcore"),
+    # loads and stores
+    ("vldr s0, [r1, #8]", "fpmem"),
+    ("vldr s17, [r1, #-1020]", "fpmem"),
+    ("vstr s1, [r1, #1020]", "fpmem"),
+    ("vstr s31, [r1, #-4]", "fpmem"),
+    ("vldr s0, [sp, #12]", "fpmem"),
+    ("vldr s0, .+12", "fpmem"),
+    ("nop; vldr s0, .+10", "fpmem"),
+    ("vldmia r1, {s0-s3}", "fpmem"),
+    ("vldmia r1!, {s4-s6}", "fpmem"),
+    ("vstmia r1!, {s1-s2}", "fpmem"),
+    ("vstmdb r1!, {s8-s15}", "fpmem"),
+    ("vldmdb r1!, {s0-s1}", "fpmem"),
+    ("vpush {s16-s19}", "fpmem"),
+    ("vpop {s16-s17}", "fpmem"),
+    # in an IT block
+    ("itte gt; vmovgt.f32 s0, s1; vaddgt.f32 s2, s3, s4; vmovle s0, r1", "fpcore"),
+]
+
+# f32 bits: zeros, ones, ties for rounding, infinities, NaNs (quiet,
+# with payloads, and signaling), denormals, extremes, integers past 2^24
+FP_EDGES = [
+    0x00000000, 0x80000000, 0x3F800000, 0xBF800000, 0x3FC00000, 0xC0200000,
+    0x40200000, 0x40600000, 0xBFC00000, 0x3F000000, 0xBF000000, 0x3EFFFFFF,
+    0x7F800000, 0xFF800000, 0x7FC00000, 0xFFC00001, 0x7FC12345, 0x7F800001,
+    0xFFA00000, 0x00000001, 0x807FFFFF, 0x00800000, 0x7F7FFFFF, 0xFF7FFFFF,
+    0x4F000000, 0x4F800000, 0xCF000000, 0xCF000001, 0x4B800001, 0x4EFFFFFF,
+]
+
 EDGES = [0, 1, 2, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFE, 0x8000, 0xFFFF]
 
 
@@ -289,7 +389,7 @@ def assemble(asm):
         binf = os.path.join(d, "t.bin")
         lines = [s.strip() for s in asm.split(";")]
         with open(src, "w") as f:
-            f.write(".syntax unified\n.thumb\n")
+            f.write(".syntax unified\n.thumb\n.fpu fpv5-sp-d16\n")
             f.write("".join(line + "\n" for line in lines))
         subprocess.run(
             ["arm-none-eabi-as", "-mcpu=cortex-m33", "-o", obj, src], check=True
@@ -324,12 +424,43 @@ def rand_regs(rng, mode):
     return regs + [sp, lr], flags
 
 
+def rand_float(rng):
+    r = rng.random()
+    if r < 0.4:
+        return rng.choice(FP_EDGES)
+    if r < 0.6:
+        # small values, including integers and halves
+        x = rng.randrange(-40, 40) / rng.choice([1, 2, 4, 3])
+        return struct.unpack("<I", struct.pack("<f", x))[0]
+    if r < 0.7:
+        # integers, for conversions to f32
+        return rng.choice([rng.getrandbits(32), rng.randrange(-100, 100) & 0xFFFFFFFF])
+    # random finite values of moderate size, so sums and products are
+    # interesting
+    sign = rng.getrandbits(1) << 31
+    exp = rng.randrange(100, 156) << 23
+    return sign | exp | rng.getrandbits(23)
+
+
+def rand_fp(rng, mode):
+    s = [rand_float(rng) for _ in range(32)]
+    # Some cases with operands equal, for compares and max and min
+    if rng.random() < 0.15:
+        s[2] = s[1]
+    fpscr = rng.randrange(16) << 28
+    if rng.random() < 0.3:
+        fpscr |= 1 << 25  # DN
+    if mode == "fprm":
+        fpscr |= rng.randrange(4) << 22
+    return s, fpscr
+
+
 def is_branch(asm):
     op = asm.split()[0]
     return op[0] == "b" and op[:3] not in ("bic", "bfi", "bfc") or op[:2] in ("cb", "tb")
 
 
-def run_case(asm, code, regs, flags, mem):
+def run_case(asm, code, regs, flags, mem, fp=None):
     uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
     uc.ctl_set_cpu_model(A.UC_CPU_ARM_CORTEX_M33)
     # Room for table branches to land past the compared memory
@@ -341,6 +472,15 @@ def run_case(asm, code, regs, flags, mem):
     for r, v in zip(names, regs):
         uc.reg_write(r, v)
     uc.reg_write(A.UC_ARM_REG_XPSR, flags | (1 << 24))
+    if fp is not None:
+        # The first FPU instruction with CONTROL.FPCA clear loads FPSCR
+        # from FPDSCR, so run one (vmov s0, s0) before setting FPSCR
+        stub = 0x20000
+        uc.mem_write(stub, bytes.fromhex("b0ee400a"))
+        uc.emu_start(stub | 1, stub + 4)
+        for i, v in enumerate(fp[0]):
+            uc.reg_write(A.UC_ARM_REG_S0 + i, v)
+        uc.reg_write(A.UC_ARM_REG_FPSCR, fp[1])
     writes = []
 
     def hook(uc, access, addr, size, value, data):
@@ -354,10 +494,17 @@ def run_case(asm, code, regs, flags, mem):
         uc.emu_start(CODE | 1, CODE + len(code))
     final = [uc.reg_read(r) for r in names] + [uc.reg_read(A.UC_ARM_REG_PC)]
     nzcv = uc.reg_read(A.UC_ARM_REG_XPSR) & 0xF0000000
+    if fp is not None:
+        s = [uc.reg_read(A.UC_ARM_REG_S0 + i) for i in range(32)]
+        # The cumulative exception flags aren't compared
+        fpscr = uc.reg_read(A.UC_ARM_REG_FPSCR) & ~0x9F
+        return final, nzcv, writes, s + [fpscr]
     return final, nzcv, writes
 
 
 def main():
+    if sys.argv[1:] == ["fp"]:
+        return main_fp()
     rng = random.Random(1)
     mem = pattern()
     print("# Generated by tests/gen_vectors.py; don't edit.")
@@ -377,6 +524,39 @@ def main():
                 str(n),
                 " ".join(f"{v:x}" for v in regs + [flags]),
                 " ".join(f"{v:x}" for v in final + [nzcv]),
+                " ".join(f"{a:x}:{s}:{v:x}" for a, s, v in writes),
+            ]
+            print(" | ".join(fields))
+
+
+def main_fp():
+    rng = random.Random(2)
+    mem = pattern()
+    print("# Generated by tests/gen_vectors.py fp; don't edit.")
+    print(
+        "# asm | code | steps | r0-r12 sp lr nzcv | s0-s31 fpscr"
+        " | r0-r12 sp lr pc nzcv | s0-s31 fpscr | writes"
+    )
+    for asm, mode in FP_TEMPLATES:
+        code, n = assemble(asm)
+        for _ in range(3 * CASES):
+            regs, flags = rand_regs(rng, "mem" if mode == "fpmem" else "alu")
+            s, fpscr = rand_fp(rng, mode)
+            if asm.startswith("vmsr"):
+                # Only the modes m33 runs arithmetic in
+                regs[0] = (regs[0] & 0xF000009F) | (rng.getrandbits(1) << 25)
+            final, nzcv, writes, fp_final = run_case(
+                asm, code, regs, flags, mem, (s, fpscr)
+            )
+            hexes = lambda vs: " ".join(f"{v:x}" for v in vs)
+            fields = [
+                asm,
+                code.hex(),
+                str(n),
+                hexes(regs + [flags]),
+                hexes(s + [fpscr]),
+                hexes(final + [nzcv]),
+                hexes(fp_final),
                 " ".join(f"{a:x}:{s}:{v:x}" for a, s, v in writes),
             ]
             print(" | ".join(fields))

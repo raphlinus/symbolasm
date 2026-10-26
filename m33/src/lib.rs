@@ -8,6 +8,8 @@ use elf::{ElfBytes, abi::PT_LOAD, endian::LittleEndian};
 pub mod arith;
 pub mod cond;
 pub mod cpu;
+pub mod fp;
+mod fpinstr;
 pub mod instr;
 pub mod syscall;
 
