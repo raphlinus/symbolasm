@@ -76,7 +76,7 @@ A move to the same register is elided, an exception to the "one statement compil
 | bx lr              | bx lr             |
 | blx r0             | blx r0            |
 
-Calls are *currently* `bl label` but will likely be reworked to support richer function types.
+The `bl label` syntax is supported for raw calls, but most calls will be done using `call` syntax, described below.
 
 ### Block structure
 
@@ -107,8 +107,8 @@ Lastly, `while { a } loop { b }` brings `while`, `loop`, and `break` into scope.
         if n == 0 goto break
         i @r4 = 0
     } loop {
-        r0 = i
-        bl print
+        i_print @r0 = i
+        call print(i_print)
         i += 1
         #(i - n)
         if #ne goto loop
@@ -139,11 +139,46 @@ Currently not supported is interleaving of `then` and `else`, for example `itet`
 
 ## Function declarations
 
-Functions are declared with Rust-style syntax. Arguments (up to the first four) are placed in `r0`..`r3`. Additional arguments are allowed, but stack placement syntax is not yet implemented.
+A basic function declaration is `fn name(args) -> ret { body }`. The return value is optional, and can be a tuple. Each argument is either `variable` or `variable: type`; in the former case, it defaults to `u32`.
 
 Labels are local to the function body. Branches to labels not locally declared are considered to be global.
 
-There is currently no syntax for return value type, or enforcement of ABI, but both are planned.
+A function can be annotated with an ABI, using `fn[abi = loose] name(args) -> ret` syntax. Three initially supported values are aapcs, loose, and wild. Default is aapcs. We may expand this set, or allow for more fine grained customization, in the future.
+
+The wild ABI potentially clobbers all registers, can leave stack unbalanced, and doesn't require stack analysis to converge.
+
+The loose ABI is similar to aapcs but r4-r7 are caller-saved, up to 8 arguments can be passed in registers, and up to 8 registers are available for tuple return values. In addition, stack is only 4 byte aligned.
+
+Stack alignment is checked; calling an aapcs function requires the caller to be aapcs as well, and that the stack offset is 0 mod 8.
+
+Functions are called with `ret @r0 = call target(arg0, arg1)` syntax. It is an error for the args and return values to be placed in registers other than ABI sequence, or for length to mismatch. Explicit placement of return value is optional when the variable is already placed in the correct register. The `bl` syntax is still allowed on defined symbols, and does no checking.
+
+Function types of the form `fn(args) -> ret` are supported, as a form of pointer (very useful for vtables). Calling a function pointer stored in a register compiles to `blx` and invokes the same checks as a static function of the same type. ABI defaults to aapcs but can be modified with an annotation, as in `fn[abi = loose]()`
+
+The return value in the function signature is implicitly placed in their register at each assignment within the function body (killing any other placement in that register). Only assignment with `=` counts for this purpose, not `+=` and so on.
+
+Arguments passed on stack are given as stack-placed variables, and must be at the correct stack offset. Example (this is a code fragment):
+
+```
+    arg0 @r0 = 0
+    arg1 @r1 = 1
+    arg2 @r2 = 2
+    arg3 @r3 = 3
+    arg4 @r12 = 4
+    push(arg4)
+    call function(arg0, arg1, arg2, arg3, sp.arg4)
+    sp += 4
+```
+
+There is no ordering constraint that a function needs to be declared before its use, or in the same file. Using a function in another file requires that file to be listed in a "use" item, however.
+
+A `symbol` definition matching a function is allowed (typically in different files), allowing for more flexible linking. The ABI, argument types, and return value types must match.
+
+If and when we do constant placement, it will be allowed in arg position, as in `call print_char(42 @r0)`. I can see this being very useful. More complex expressions will not be allowed, unless in the future we have a relaxed mode.
+
+Possible future extension: `#[must_use]` annotation, which would trigger a lint for unused return values.
+
+Tail calls are supported with `#[tail] call` syntax. This checks the same as a normal call, including that return value signature matches the caller. It compiles to the same instruction as `goto` but signals intent and is more thoroughly checked.
 
 ## Variables and placing
 
@@ -151,7 +186,35 @@ A major difference from raw assembler is that variables are named, rather than r
 
 A variable always has the same type within a function, but can be placed in different registers at different points in the function.
 
-To be done: stack placing.
+## Stack placement
+
+Stack placement is similar to register placement, but with some important differences.
+
+### Stack analysis
+
+Stack analysis is a flow analysis that assigns each instruction a stack offset relative to the start of the function. Failing to converge is an error unless ABI is "wild". Increment/decrement by register is forbidden outside "wild".
+
+When a variable is stack-placed, it is accessible using `sp.x` syntax – load, store, and address-of, all of which have ARM instruction support.
+
+ABI spill arguments are stack-placed on function entry.
+
+Pushing a variable stack-places it, while keeping the register placement. Register placements and stack placements are separate namespaces; `x` refers to a register, while `sp.x` syntax is needed to refer to the stack placement.
+
+Variables can be stack-placed, uninitialized, using the following syntax:
+
+```
+    sp -= 12 (x, p: Point)
+```
+
+The variables are placed lowest-first, matching push. Each variable is aligned according to its type, and the total is rounded up to a multiple of 4. It is an error for the (rounded) size of the tuple to mismatch the decrement.
+
+Popping or incrementing sp un-places the variables in the affected range. If it splits a placement of size larger than 4, the entire placement is killed (this might be a lint).
+
+Other sp-relative writeback forms are analyzed the same way as push/pop.
+
+Pushing and popping a numbered register which contained a variable places the variable back in that register. The same core analysis applies to verifying callee-saved registers; callee-saved registers can be analyzed as pseudo-variables which must retain their valid placement on function exit.
+
+Assignment to the stack using mechanisms other than stack placement (including numeric offsets) does not affect placement. While it would be possible to analyze some of these patterns, it is in general undecidable. Accessing the stack in this way signals programmer intent to do something nonstandard.
 
 ## Types
 
@@ -227,8 +290,6 @@ A symbol can be used in the following contexts:
 | mov r0, #:lower16:name  | r0 = lower16(name)         |
 | movt r0, #:upper16:name | r0[16..32] = upper16(name) |
 
-For the time being, we're *not* using symbol declarations for functions; bl to an otherwise undeclared label is just passed through to the assembler. We may very well rethink this for the purpose of better validation, especially if and when we have real function types.
-
 ## Importing SVD
 
 The compiler has a command line option to import an [SVD] (System View Description) file. This populates addresses and types.
@@ -239,14 +300,8 @@ There are still some gaps, for example `derivedFrom` is not yet supported. Named
 
 Files can refer to items defined by other files, but need an explicit `use "otherfile.sy"` before they're used (usually at the top of the file). Among other things, this enables checking of a single file without needing a manifest.
 
-At the moment, calls don't need a `use`, as global targets are resolved by the linker. This will almost certainly change when we implement richer function types.
-
 ## Not yet implemented, but planned
 
 The `adc` and `sbc` instructions don't work (syntax in above table is provisional).
-
-We will have syntax for placing variables on the stack, as well as fairly extensive analysis for stack balance, and that registers are properly restored as per ABI. For ABI, we will also have a choice between AAPCS and more relaxed forms.
-
-Function calls will gain proper types, and arguments and return value will be tracked, as opposed to the current implicit state where arguments are passed in r0..r3 (and on stack), and return value in r0.
 
 [SVD]: https://arm-software.github.io/CMSIS_5/SVD/html/index.html
