@@ -224,7 +224,7 @@ There are types. These have several functions:
 * determining the size of memory transfers (ldr, ldrb, ldrh)
 * enabling struct field offset syntax: `r0 = r1.field`
 
-The built-in scalar types are `u32` (default), `u16`, `u8`, `i32`, `i16`, `i8`. Pointers are `*T`. As in Rust, `as` syntax casts from one type to another.
+The built-in scalar types are `u32` (default), `u16`, `u8`, `i32`, `i16`, `i8`, `f32`. Pointers are `*T`. As in Rust, `as` syntax casts from one type to another.
 
 Array types are supported, with `[T; n]` syntax. That said, there is no dedicated syntax for array indexing; this is expressed using pointer dereferencing. For an array type, `count()` represents the number of elements. For all types, `size(name)` is its size in bytes (name can refer to a static, a scalar type, or a struct).
 
@@ -263,6 +263,24 @@ Array initializers work with the expected syntax. If multiline, trailing commas 
 Data initializers can take an `#[align = n]` attribute. Attributes stack.
 
 Struct field access is supported, including nested structs. These compile to the appropriate `ldr` or `str` instruction variant. Taking the address of a struct field is also supported (for example `&s.field`) and compiles to addition.
+
+## Floating point
+
+Floating point is now supported, including basic arithmetic. The float type is `f32` (currently no support for `f64`). Float registers are `s0` through `s31`; these are reserved and can't be used to name variables.
+
+Literals must be floating point. Some literals can be expressed as immediates, others (including 0.0) are loaded from the constant pool, analogous to integers.
+
+The following intrinsics have the same name and semantics as in Rust: `abs sqrt floor ceil round round_ties_even trunc min max`. The `to_bits` and `from_bits` intrinsics do bit casting. In addition, `i32_to_f32` and `f32_to_i32` do conversion, as do their `u32` counterparts. Rounding can be combined with conversion to integer in a single instruction, as in `f32_to_i32(floor(x))`. Using `as` to cast float types is not supported, but type punning through a pointer cast will work.
+
+The `fma` intrinsic is supported, with both `fma(a, b, x)` and `fma(-a, b, x)` supported. This is a fused multiply-add. Non-fused multiply-adds are supported using `x += a * b`, `x -= a * b`, `x = a * b - x`, and `x = -x - a * b`. Note: the result must be stored in the same register as the addend; the underlying instructions are 3-register.
+
+The `push` and `pop` instructions are supported. Integer and float registers cannot be mixed.
+
+Loads and stores work, with integer offsets (multiples of 4 up to ±1020), struct fields, stack, and post-increment. Tuples must be consecutive registers. There are no instructions for register offset or post-decrement.
+
+Compares are slightly awkward on Cortex-M33. The main comparison instruction is `fpscr = cmp(a, b)`, which is then best transferred to processor flags using `#(fpscr)`. The second argument can be a register or `0.0`. The `cmpe()` variant (raising an Invalid Operation by setting the sticky IOC bit in fpscr) is also provided. In addition `r = fpscr` and `fpscr = r` are supported. The semantics of comparison are fiddly: an unordered comparison makes `#lt` true and `#mi` false. The `#gt` and `#ge` tests are false on unordered comparisons. Unordered comparisons set the `V` flag and so can be tested with `#vs`.
+
+The ABI is hard-float and follows ARM conventions: `s0`-`s15` are caller-saved and `s16`-`s31` are callee-saved, in both `aapcs` and `loose` ABIs.
 
 ## Const
 
