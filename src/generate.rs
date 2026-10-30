@@ -1124,7 +1124,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     if let Some(id) = target.as_ident() {
                         self.start_insn("bx", if_state)?;
                         write!(self.w, " ")?;
-                        write_var_reg(id, regmap, self.w)?;
+                        write_var_reg("bx", id, regmap, self.w)?;
                         writeln!(self.w)?;
                     } else {
                         Err("bx target must be register")?;
@@ -1134,7 +1134,7 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     if let Some(id) = target.as_ident() {
                         self.start_insn("blx", if_state)?;
                         write!(self.w, " ")?;
-                        write_var_reg(id, regmap, self.w)?;
+                        write_var_reg("blx", id, regmap, self.w)?;
                         writeln!(self.w)?;
                     } else {
                         Err("blx target must be register")?;
@@ -1174,20 +1174,20 @@ impl<'a, W: Write> GenCtx<'a, W> {
                     if let Some(id) = reg.as_ident() {
                         self.start_insn("cbz", if_state)?;
                         write!(self.w, " ")?;
-                        write_var_reg(id, regmap, self.w)?;
+                        write_low_var_reg("cbz", id, regmap, self.w)?;
                         writeln!(self.w, ", {}", labels.asm_name(target))?;
                     } else {
-                        Err("bx target must be register")?;
+                        Err("cbz operand must be register")?;
                     }
                 }
                 crate::stmt::Insn::Cbnz(reg, target) => {
                     if let Some(id) = reg.as_ident() {
                         self.start_insn("cbnz", if_state)?;
                         write!(self.w, " ")?;
-                        write_var_reg(id, regmap, self.w)?;
+                        write_low_var_reg("cbnz", id, regmap, self.w)?;
                         writeln!(self.w, ", {}", labels.asm_name(target))?;
                     } else {
-                        Err("bx target must be register")?;
+                        Err("cbnz operand must be register")?;
                     }
                 }
             },
@@ -1305,18 +1305,48 @@ impl<'a, W: Write> GenCtx<'a, W> {
     }
 }
 
-/// A core register, for bx, blx, cbz and cbnz
-fn write_var_reg(id: &str, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
+/// A core register, for bx and blx
+fn write_var_reg(insn: &str, id: &str, regmap: &Regmap, w: &mut impl Write) -> Result<(), Error> {
+    write_reg(var_core_reg(insn, id, regmap)?, w)
+}
+
+/// A low register, for cbz and cbnz, which have no 32 bit encoding
+fn write_low_var_reg(
+    insn: &str,
+    id: &str,
+    regmap: &Regmap,
+    w: &mut impl Write,
+) -> Result<(), Error> {
+    let r = var_core_reg(insn, id, regmap)?;
+    if r >= 8 {
+        Err(format!(
+            "{insn} needs a low register, not {}",
+            describe_reg(id, r)
+        ))?;
+    }
+    write_reg(r, w)
+}
+
+fn var_core_reg(insn: &str, id: &str, regmap: &Regmap) -> Result<u8, Error> {
     let Some(r) = parse_register(id).or_else(|| regmap.lookup(id)) else {
         return Err(format!("no place for {id}"))?;
     };
     if is_sreg(r) {
         Err(format!(
-            "{id} is in {}, and this needs a core register",
-            reg_name(r)
+            "{insn} needs a core register, not {}",
+            describe_reg(id, r)
         ))?;
     }
-    write_reg(r, w)
+    Ok(r)
+}
+
+/// The register for an error message, along with the variable if there is one
+fn describe_reg(id: &str, r: u8) -> String {
+    if parse_register(id).is_some() {
+        reg_name(r)
+    } else {
+        format!("{id} ({})", reg_name(r))
+    }
 }
 
 fn s(with_flags: WithFlags) -> &'static str {

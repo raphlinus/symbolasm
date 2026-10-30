@@ -1,0 +1,6 @@
+// error: cbnz needs a low register, not r12
+fn f() {
+    if r12 != 0 goto done
+    r12 = 1
+done:
+}

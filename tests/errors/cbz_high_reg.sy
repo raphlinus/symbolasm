@@ -1,0 +1,7 @@
+// error: cbz needs a low register, not x (r8)
+fn[abi = wild] f() {
+    x @r8 = 5
+    if x == 0 goto done
+    x = 1
+done:
+}
