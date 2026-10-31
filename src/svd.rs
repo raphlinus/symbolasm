@@ -50,7 +50,11 @@ fn parse_peripheral(
 ) -> Result<(), Error> {
     let mut name = None;
     let mut base_address = 0;
-    let mut ty = None;
+    // A derived peripheral shares the registers of an earlier one.
+    let mut ty = e
+        .attribute("derivedFrom")
+        .and_then(|base| periphs.periphs.get(base))
+        .map(|p| p.ty);
     for child in e.children() {
         if let BodyNode::Element(e) = child {
             let tag_name = e.tag_name();

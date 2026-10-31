@@ -312,7 +312,7 @@ A symbol can be used in the following contexts:
 
 The compiler has a command line option to import an [SVD] (System View Description) file. This populates addresses and types.
 
-There are still some gaps, for example `derivedFrom` is not yet supported. Named bitfield ranges and enums are also under consideration but not yet implemented.
+There are still some gaps. Named bitfield ranges and enums are under consideration but not yet implemented.
 
 ## Explicit dependencies
 
